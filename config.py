@@ -17,14 +17,14 @@ from pathlib import Path
 # ── Rutas ────────────────────────────────────────────────────────────────────
 RUTA_ESTUDIO = Path(__file__).parent
 RUTA_MODELO_PLECS = Path(
-    r"C:\Users\danie\Downloads\mpc_pruebas\MMC_sinmodulacion - Con MPC - Corrección Predicciones.plecs"
+    r"C:\Users\danie\Downloads\mpc_pruebas\MMC_sinmodulacion - Con MPC - Listo para pruebas por pesos.plecs"
 )
 SCRIPT_EXISTENTE = RUTA_ESTUDIO / "plecs_runner.py"  # wrapper reutilizado/extendido del script original
 PLANTILLA_EXCEL = "Pruebas_por_peso_MPC._Modelo_promedio.xlsx"
 EXCEL_RESULTADOS = RUTA_ESTUDIO / "resultados" / "Pruebas_por_peso_MPC_resultados.xlsx"
 
 # ── Modelo PLECS ─────────────────────────────────────────────────────────────
-MODEL_NAME = "MMC_sinmodulacion - Con MPC - Corrección Predicciones"
+MODEL_NAME = "MMC_sinmodulacion - Con MPC - Listo para pruebas por pesos"
 PLECS_URL = "http://localhost:1080/RPC2"
 
 # Bloque C-Script del MPC de capacitores: contiene N (horizonte) y los 7 pesos
