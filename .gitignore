@@ -1,0 +1,15 @@
+# Datos crudos de PLECS por simulación (pesados, quedan solo locales por máquina).
+# Solo resultados/simulaciones.csv se versiona (coordinación multi-máquina).
+resultados/raw/
+resultados/tmp/
+resultados/formas_onda/
+resultados/figuras/
+resultados/optuna.db
+resultados/progreso.log
+
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Dumps de referencia (modelo tree, Declarations) — locales, no compartidos.
+_ref/
