@@ -227,20 +227,71 @@ def run_simulation(timeout: float = 120.0):
 
 # ── Exportar scopes ───────────────────────────────────────────────────────────
 
-def export_scope_csv(scope_key: str, csv_path: Path):
-    """Exporta el scope indicado a CSV. scope_key debe estar en SCOPES."""
+def verificar_scopes_abiertos():
+    """Chequea que las ventanas de todos los SCOPES configurados estén abiertas
+    AHORA, antes de intentar exportar. Falla con un mensaje claro indicando
+    cuál falta, en vez de colgarse silenciosamente en pywinauto (visto en
+    producción: si una ventana de scope se cierra o nunca se abrió, el export
+    queda esperando indefinidamente sin traceback útil)."""
+    titulos_abiertos = {w.window_text() for w in Desktop(backend="uia").windows()}
+    faltantes = [key for key, title in SCOPES.items() if title not in titulos_abiertos]
+    if faltantes:
+        raise RuntimeError(
+            f"Las siguientes ventanas de scope no están abiertas en PLECS: "
+            f"{[SCOPES[k] for k in faltantes]}. Abrilas manualmente antes de simular."
+        )
+
+
+def _ventana_activa_es(titulo: str) -> bool:
+    try:
+        return Desktop(backend="uia").window(active_only=True).window_text() == titulo
+    except Exception:
+        return False
+
+
+def export_scope_csv(scope_key: str, csv_path: Path, intentos: int = 3):
+    """Exporta el scope indicado a CSV. scope_key debe estar en SCOPES.
+
+    Reintenta el flujo completo si el foco no se mantiene en la ventana del
+    scope (visto en producción: PLECS a veces devuelve el foco a la ventana
+    principal del modelo justo después de set_focus(), antes de poder abrir
+    el menú File > Export, haciendo que "Export" no se encuentre)."""
     scope_title = SCOPES[scope_key]
     csv_path.parent.mkdir(parents=True, exist_ok=True)
 
-    app = Application(backend="uia").connect(title=scope_title)
-    win = app.window(title=scope_title)
-    win.set_focus()
-    time.sleep(0.3)
+    ultimo_error = None
+    for intento in range(1, intentos + 1):
+        try:
+            app = Application(backend="uia").connect(title=scope_title)
+            win = app.window(title=scope_title)
+            win.set_focus()
+            time.sleep(0.4)
 
-    win.child_window(title="File", control_type="MenuItem").click_input()
-    time.sleep(0.3)
-    win.child_window(title="Export", control_type="MenuItem").click_input()
-    time.sleep(0.3)
+            if not _ventana_activa_es(scope_title):
+                # El foco saltó a otra ventana (p.ej. la principal del modelo).
+                # Reintentar set_focus una vez más antes de rendirse este intento.
+                win.set_focus()
+                time.sleep(0.4)
+                if not _ventana_activa_es(scope_title):
+                    raise RuntimeError(
+                        f"El foco no se mantuvo en la ventana del scope {scope_title!r} "
+                        f"(ventana activa: {Desktop(backend='uia').window(active_only=True).window_text()!r})."
+                    )
+
+            win.child_window(title="File", control_type="MenuItem").click_input()
+            time.sleep(0.3)
+            win.child_window(title="Export", control_type="MenuItem").click_input()
+            time.sleep(0.3)
+            break
+        except Exception as e:
+            ultimo_error = e
+            if intento < intentos:
+                time.sleep(0.5 * intento)
+                continue
+            raise RuntimeError(
+                f"No se pudo abrir File > Export en el scope {scope_title!r} tras "
+                f"{intentos} intentos. Último error: {ultimo_error}"
+            )
 
     csv_item = win.child_window(title="as CSV", control_type="MenuItem")
     rect = csv_item.rectangle()

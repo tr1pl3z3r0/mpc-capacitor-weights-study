@@ -181,9 +181,11 @@ def simular_punto(horizonte: int, pesos: dict, fase: str, semilla: int = None,
             return None  # conflicto persistente, el llamador debe pedir otro punto
 
     try:
+        pr.verificar_scopes_abiertos()
         pr.aplicar_punto(horizonte, pesos, config)
         pr.run_simulation(timeout=config.TIMEOUT_SIM)
     except Exception as e:
+        print(f"  [sim {sim_id}] FALLIDA: {e}")
         fila = {**fila_base, "estado": "FALLIDA", "valida_P0": False, "cumple_P1": False,
                 "duracion_s": round(time.time() - t0, 2)}
         for col in COLUMNAS_CSV:
@@ -197,6 +199,7 @@ def simular_punto(horizonte: int, pesos: dict, fase: str, semilla: int = None,
     try:
         dfs = _cargar_scopes(carpeta)
     except Exception as e:
+        print(f"  [sim {sim_id}] TIMEOUT (export): {e}")
         fila = {**fila_base, "estado": "TIMEOUT", "valida_P0": False, "cumple_P1": False,
                 "duracion_s": round(time.time() - t0, 2)}
         for col in COLUMNAS_CSV:
@@ -218,6 +221,26 @@ def simular_punto(horizonte: int, pesos: dict, fase: str, semilla: int = None,
     t_sim_real = config.T_SIM
     t_ini_ventana = t_sim_real - config.T_VENTANA
     t_fin_ventana = t_sim_real
+
+    # Simulación truncada: el solver divergió y PLECS detuvo la simulación
+    # antes de alcanzar T_SIM (visto en producción: divergencia en <1ms de
+    # tiempo simulado). La ventana de evaluación quedaría vacía y rompería los
+    # cálculos de métricas (p.ej. .max() sobre un array vacío) — se marca
+    # INVALIDA directamente, sin intentar calcular métricas sobre datos que no
+    # cubren la ventana.
+    duracion_simulada = min(t_vcap.max(), t_icirc.max(), t_idc.max())
+    if duracion_simulada < t_fin_ventana:
+        print(f"  [sim {sim_id}] INVALIDA: simulación truncada en t={duracion_simulada:.4g}s "
+              f"(< T_SIM={t_sim_real}s), probable divergencia del solver.")
+        fila = {**fila_base, "estado": "INVALIDA", "valida_P0": False, "cumple_P1": False,
+                "duracion_s": round(time.time() - t0, 2)}
+        for col in COLUMNAS_CSV:
+            fila.setdefault(col, "")
+        _append_csv(fila)
+        if usar_git:
+            import git_sync
+            git_sync.sincronizar_resultado_final(f"sim {sim_id}: INVALIDA (truncada)")
+        return fila
 
     # NaN/Inf check (P0.a)
     arrays_a_chequear = (
