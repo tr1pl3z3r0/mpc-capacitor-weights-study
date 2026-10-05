@@ -152,6 +152,17 @@ SEMILLA = 42
 TIMEOUT_SIM = 120.0  # s
 INCLUIR_CASO_BASE_COMO_PRUEBA_1 = True
 
+# [PROVISIONAL] Tolerancia de repetibilidad para la Fase 6 (verificación
+# final). La sección 7 pide usar "la tolerancia de repetibilidad medida en la
+# Fase 0", pero esa medición real depende de que el caso base converja
+# (pendiente, ver nota en T_SIM más abajo). Confirmado con el usuario
+# (2026-10-04): usar 1% como placeholder laxo mientras tanto, más conservador
+# que el 1e-6 relativo de la sección 6 (ese umbral es para detectar
+# "resultados distintos" en repeticiones exactas del caso base, un chequeo
+# más estricto que no aplica aún sin Fase 0 real). DEBE reemplazarse por la
+# medición empírica real antes de confiar en los resultados de Fase 6.
+TOL_REPETIBILIDAD = 0.01
+
 # ── Ejecución multi-máquina (coordinación vía GitHub) ───────────────────────
 import socket
 MAQUINA_ID = socket.gethostname()
