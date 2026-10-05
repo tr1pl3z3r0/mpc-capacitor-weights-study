@@ -1,2 +1,0 @@
-id,fecha_hora,fase,horizonte,maquina_id,q11,q22,q33,q44,q55,r11,r22,Q_Val,R_Val,T_SIM,estado,osc_vcap_ap,osc_vcap_bp,osc_vcap_cp,osc_vcap_an,osc_vcap_bn,osc_vcap_cn,osc_max,desv_max,media_vcap_ap,media_vcap_bp,media_vcap_cp,media_vcap_an,media_vcap_bn,media_vcap_cn,rms_icirc_alpha,rms_icirc_beta,rms_icirc_peor,rms_icirc_T025,max_icirc,min_icirc,pico_abs_icirc,rmse_vcap,itae,idc_abs_max,valida_P0,cumple_P1,duracion_s,semilla
-1,2026-10-04T19:48:15,test_claim,99,DESKTOP-5F0L95C,1.0,1.0,1.0,1.0,1.0,0.01,0.01,1.0,0.001,10.0,FALLIDA,,,,,,,,,,,,,,,,,,,,,,,,,False,False,1.0,42
