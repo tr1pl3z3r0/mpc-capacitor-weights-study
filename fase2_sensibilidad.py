@@ -6,10 +6,12 @@ qué pesos se pueden fijar (cambio < 2% en todo el rango) o acotar (rango con
 fallas/invalidez).
 
 Uso:
-    python fase2_sensibilidad.py
+    python fase2_sensibilidad.py            # solo esta máquina, sin coordinar
+    python fase2_sensibilidad.py --git       # coordina con otras máquinas vía GitHub
 """
 
 import json
+import sys
 
 import numpy as np
 
@@ -20,8 +22,11 @@ EXPONENTES = [-3, -2, -1, 0, 1, 2, 3]
 
 
 def main():
+    usar_git = "--git" in sys.argv
+
     print("=" * 60)
-    print("  Fase 2: sensibilidad un peso a la vez (N={})".format(config.HORIZONTE_REFERENCIA))
+    print(f"  Fase 2: sensibilidad un peso a la vez (N={config.HORIZONTE_REFERENCIA}, "
+          f"maquina={config.MAQUINA_ID}, git={usar_git})")
     print("=" * 60)
 
     resultados = {}  # peso -> lista de (exponente, fila)
@@ -34,7 +39,11 @@ def main():
             pesos_punto[peso] = config.PESOS_BASE[peso] * (10.0 ** exp)
 
             fila = simular_punto(horizonte=config.HORIZONTE_REFERENCIA, pesos=pesos_punto,
-                                  fase="fase2")
+                                  fase="fase2", usar_git=usar_git)
+            if fila is None:
+                print(f"  {peso}*10^{exp:+d} = {pesos_punto[peso]:.4g}  "
+                      f"(ya tomado/terminado por otra máquina, se omite)")
+                continue
             resultados[peso].append((exp, fila))
             print(f"  {peso}*10^{exp:+d} = {pesos_punto[peso]:.4g}  "
                   f"estado={fila['estado']}  osc_max={fila.get('osc_max','')}  "

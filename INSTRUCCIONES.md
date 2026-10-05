@@ -7,6 +7,15 @@ Automatizar, ejecutar y documentar un estudio de simulaciones en PLECS. Para cad
 
 NOTA: la plantilla Excel y el texto original de estas instrucciones mencionan "10 horizontes"; se confirmó con el usuario (2026-09-30) que el estudio real cubre solo 5 horizontes (N=1..5). Donde el documento diga "10 horizontes" o "10 bloques", debe leerse como "5 horizontes" / "5 bloques" — se usarán solo los primeros 5 bloques de la hoja Excel (filas 3 a 77).
 
+NOTA (2026-10-04): el estudio se ejecuta en MÚLTIPLES máquinas en paralelo,
+coordinadas vía un repositorio de GitHub que actúa como base de datos
+compartida (https://github.com/tr1pl3z3r0/mpc-capacitor-weights-study). Esto
+reemplaza la regla inquebrantable 5.11 ("correr las simulaciones de una en
+una... solo paralelizar si el script existente ya lo hace y está probado"):
+cada máquina corre sus simulaciones secuencialmente en sí misma (eso no
+cambia), pero varias máquinas pueden correr en paralelo entre sí. Ver sección
+8 para el mecanismo de coordinación (claim) y qué se versiona en git.
+
 Ya existe un script de Python que automatiza PLECS y la toma de datos. REUTILÍZALO; no lo reescribas desde cero.
 
 Los campos marcados [COMPLETAR] pueden venir vacíos. En ese caso, averígualos leyendo el script y el modelo, y confírmalos conmigo en el punto de control de la Fase 0. Nunca supongas un valor [COMPLETAR] sin confirmarlo.
@@ -247,6 +256,35 @@ simulaciones.csv lleva una fila por simulación. Escríbela y guárdala (flush) 
 - valida_P0, cumple_P1, duracion_s, semilla
 
 Antes de simular, comprueba si esa combinación exacta (horizonte + pesos redondeados) ya está en el CSV. Si está, reutiliza el resultado en lugar de repetir la simulación.
+
+### Ejecución multi-máquina (añadido 2026-10-04)
+
+El estudio corre en paralelo en varias máquinas, coordinadas vía GitHub
+(repo privado, ver nota al inicio de este documento). Columna adicional en
+simulaciones.csv: `maquina_id` (hostname de la máquina que corrió esa
+simulación).
+
+Qué se versiona en git: SOLO `resultados/simulaciones.csv`. Los CSV crudos de
+cada scope (v_cap, i_circ, i_dc) y `metricas.json` por simulación quedan en
+`resultados/raw/sim{id:05d}/`, local a cada máquina (en .gitignore, no se
+suben — demasiado pesados para repetir en cientos de simulaciones).
+`optuna.db` tampoco se sincroniza: cada máquina mantiene su propio estudio de
+Optuna por horizonte, sin ver los puntos que otra máquina ya probó al elegir
+el siguiente (sampler menos eficiente, pero evita una base de datos remota).
+El CSV compartido sí evita que dos máquinas simulen el mismo punto exacto dos
+veces.
+
+Mecanismo de claim (implementado en git_sync.py, usar_git=True en
+simular_punto): antes de correr una simulación, la máquina hace `pull`,
+verifica que el punto (horizonte + pesos redondeados) no esté ya tomado por
+otra máquina (fila con estado=CORRIENDO y fecha_hora reciente, dentro de
+TIMEOUT_CLAIM_S=600s) ni ya terminado, escribe una fila CORRIENDO con su
+maquina_id, y hace `commit`+`push` INMEDIATAMENTE para reservarlo. Si el push
+falla por conflicto (otra máquina reservó un punto distinto casi al mismo
+tiempo y ya hizo push), se reintenta con pull fresco. Al terminar de simular,
+la fila CORRIENDO se reemplaza (mismo id) por el resultado final y se
+sincroniza de nuevo. Una fila CORRIENDO más vieja que TIMEOUT_CLAIM_S se
+considera abandonada (máquina caída) y puede reclamarse de nuevo.
 
 ## 9. Comunicación
 - Escribe todo en español.
