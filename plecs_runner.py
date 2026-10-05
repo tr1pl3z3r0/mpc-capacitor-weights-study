@@ -12,6 +12,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pyautogui
+import win32api
+import win32con
+import win32gui
+import win32process
 from pywinauto import Desktop, Application
 
 # ── Configuración ─────────────────────────────────────────────────────────────
@@ -157,6 +161,44 @@ def _is_model_top_window(text: str) -> bool:
     return base == MODEL_NAME
 
 
+def _forzar_foreground(hwnd: int):
+    """win.set_focus() de pywinauto (UIA) a veces reporta éxito sin realmente
+    traer la ventana al frente del z-order de Windows (visto en producción:
+    PLECS queda detrás de VSCode/terminal, Ctrl+T no llega a ningún lado).
+    Windows restringe SetForegroundWindow para procesos en segundo plano
+    (foreground lock) — un intento directo suele fallar con "Acceso
+    denegado" o quedar sin efecto. AttachThreadInput vincula temporalmente
+    el hilo de este proceso con el de la ventana que SÍ tiene el foco,
+    lo cual generalmente evita esa restricción."""
+    hwnd_actual = win32gui.GetForegroundWindow()
+    if hwnd_actual == hwnd:
+        return
+
+    tid_actual, _ = win32process.GetWindowThreadProcessId(hwnd_actual) if hwnd_actual else (0, 0)
+    tid_destino, _ = win32process.GetWindowThreadProcessId(hwnd)
+    tid_propio = win32api.GetCurrentThreadId()
+
+    adjuntado_actual = False
+    adjuntado_propio = False
+    try:
+        if tid_actual and tid_actual != tid_destino:
+            win32process.AttachThreadInput(tid_actual, tid_destino, True)
+            adjuntado_actual = True
+        if tid_propio != tid_destino:
+            win32process.AttachThreadInput(tid_propio, tid_destino, True)
+            adjuntado_propio = True
+
+        if win32gui.IsIconic(hwnd):
+            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+        win32gui.BringWindowToTop(hwnd)
+        win32gui.SetForegroundWindow(hwnd)
+    finally:
+        if adjuntado_actual:
+            win32process.AttachThreadInput(tid_actual, tid_destino, False)
+        if adjuntado_propio:
+            win32process.AttachThreadInput(tid_propio, tid_destino, False)
+
+
 def _focus_model_win():
     wins = [w for w in Desktop(backend="uia").windows()
             if _is_model_top_window(w.window_text())]
@@ -167,8 +209,21 @@ def _focus_model_win():
             f"Se encontró más de una ventana principal candidata: "
             f"{[w.window_text() for w in wins]}"
         )
-    wins[0].set_focus()
-    time.sleep(0.4)
+    win = wins[0]
+    win.set_focus()
+    time.sleep(0.2)
+
+    hwnd = win.handle
+    if win32gui.GetForegroundWindow() != hwnd:
+        _forzar_foreground(hwnd)
+        time.sleep(0.3)
+
+    if win32gui.GetForegroundWindow() != hwnd:
+        raise RuntimeError(
+            "No se pudo traer la ventana del modelo PLECS al primer plano "
+            "(set_focus de pywinauto no es suficiente en este sistema)."
+        )
+    time.sleep(0.2)
 
 
 def _is_running() -> bool:
@@ -202,11 +257,25 @@ def run_simulation(timeout: float = 120.0):
     _focus_model_win()
     pyautogui.hotkey("ctrl", "t")
 
+    # Ventana de carrera: si la simulación es muy corta (p.ej. T_SIM chico o
+    # convergencia/crash casi inmediato), puede arrancar Y terminar antes de
+    # que el primer chequeo de _is_running() la detecte. Por eso se chequea
+    # inmediatamente (sin sleep previo) y con polling denso al inicio.
+    detectada_corriendo = False
     deadline_start = time.time() + 10.0
     while time.time() < deadline_start:
         if _is_running():
+            detectada_corriendo = True
             break
-        time.sleep(0.2)
+        time.sleep(0.05)
+
+    if not detectada_corriendo:
+        # Pudo haber corrido y terminado completo entre el Ctrl+T y el primer
+        # chequeo (polling de 50ms no es infalible). No asumir que no corrió:
+        # seguir al chequeo de "terminó" normalmente; si en verdad nunca
+        # arrancó, el caller validará contra datos (p.ej. export vacío).
+        time.sleep(0.5)
+        return
 
     deadline_end = time.time() + timeout
     while time.time() < deadline_end:
@@ -242,20 +311,16 @@ def verificar_scopes_abiertos():
         )
 
 
-def _ventana_activa_es(titulo: str) -> bool:
-    try:
-        return Desktop(backend="uia").window(active_only=True).window_text() == titulo
-    except Exception:
-        return False
-
-
 def export_scope_csv(scope_key: str, csv_path: Path, intentos: int = 3):
     """Exporta el scope indicado a CSV. scope_key debe estar en SCOPES.
 
-    Reintenta el flujo completo si el foco no se mantiene en la ventana del
-    scope (visto en producción: PLECS a veces devuelve el foco a la ventana
-    principal del modelo justo después de set_focus(), antes de poder abrir
-    el menú File > Export, haciendo que "Export" no se encuentre)."""
+    Reintenta el flujo completo si falla abrir File > Export (visto en
+    producción: PLECS a veces devuelve el foco a la ventana principal del
+    modelo justo después de set_focus(), antes de poder hacer clic en el
+    menú). NOTA: Desktop(backend="uia").window(active_only=True) es poco
+    fiable en este sistema (tarda ~5s y lanza excepción en vez de detectar
+    la ventana activa correctamente) — NO usar para verificar foco; en su
+    lugar, reintentar el flujo completo directamente si click_input falla."""
     scope_title = SCOPES[scope_key]
     csv_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -265,18 +330,13 @@ def export_scope_csv(scope_key: str, csv_path: Path, intentos: int = 3):
             app = Application(backend="uia").connect(title=scope_title)
             win = app.window(title=scope_title)
             win.set_focus()
-            time.sleep(0.4)
-
-            if not _ventana_activa_es(scope_title):
-                # El foco saltó a otra ventana (p.ej. la principal del modelo).
-                # Reintentar set_focus una vez más antes de rendirse este intento.
-                win.set_focus()
-                time.sleep(0.4)
-                if not _ventana_activa_es(scope_title):
-                    raise RuntimeError(
-                        f"El foco no se mantuvo en la ventana del scope {scope_title!r} "
-                        f"(ventana activa: {Desktop(backend='uia').window(active_only=True).window_text()!r})."
-                    )
+            time.sleep(0.2)
+            # win.set_focus() de pywinauto no siempre gana el foco real de
+            # Windows (foreground lock) — forzarlo explícitamente, igual que
+            # en _focus_model_win().
+            if win32gui.GetForegroundWindow() != win.handle:
+                _forzar_foreground(win.handle)
+                time.sleep(0.3)
 
             win.child_window(title="File", control_type="MenuItem").click_input()
             time.sleep(0.3)
