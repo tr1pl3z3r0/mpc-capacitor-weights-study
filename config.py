@@ -6,10 +6,22 @@ en otros scripts.
 
 Campos pendientes de Fase 0 (ver INSTRUCCIONES.md sección 7, Fase 0):
 - T_SIM: se fija tras simular el caso base y verificar asentamiento + régimen permanente.
-  Actualmente en placeholder provisional (10s) para desarrollo del pipeline — el
-  caso base con PESOS_BASE actuales diverge (no cumple P0), pendiente de que el
-  usuario encuentre/confirme pesos base que sí estabilicen.
 Debe confirmarse en el punto de control de Fase 0 antes de avanzar a la Fase 1.
+
+MODELO ACTUALIZADO (2026-10-10): el usuario reemplazó el modelo PLECS por una
+versión corregida ("trapezoide y con 2V0") que soluciona varios errores,
+incluyendo que la señal v0 se enviaba trapezoidal en vez de cuadrada (sección
+1: "v0: señal signo (cuadrada) de 50 Hz"). Esto invalida TODOS los resultados
+de divergencia obtenidos con el modelo anterior durante la búsqueda manual de
+pesos estables — no eran representativos del sistema real. Además, durante
+esa búsqueda se encontraron dos bugs adicionales en el pipeline (no en el
+modelo): (1) el modelo tenía TimeSpan=4s configurado manualmente (el usuario
+lo había bajado porque el sistema solía divergir cerca de t=5s), desincronizado
+de config.T_SIM, por lo que toda simulación se cortaba a los 4s sin que el
+solver llegara a mostrar si era realmente estable más allá — ahora
+aplicar_punto() sincroniza TimeSpan con T_SIM en cada llamada; (2) el scope de
+v_cap apuntaba a "Scope" en vez de "Scope1" (el de voltajes sin transformar),
+lo que daba lecturas incorrectas.
 """
 
 from pathlib import Path
@@ -17,30 +29,34 @@ from pathlib import Path
 # ── Rutas ────────────────────────────────────────────────────────────────────
 RUTA_ESTUDIO = Path(__file__).parent
 RUTA_MODELO_PLECS = Path(
-    r"C:\Users\danie\Downloads\mpc_pruebas\MMC_sinmodulacion - Con MPC - Corrección Predicciones.plecs"
+    r"C:\Users\danie\Downloads\MMC_sinmodulacion - Con MPC - trapezoide y con 2V0.plecs"
 )
 SCRIPT_EXISTENTE = RUTA_ESTUDIO / "plecs_runner.py"  # wrapper reutilizado/extendido del script original
 PLANTILLA_EXCEL = "Pruebas_por_peso_MPC._Modelo_promedio.xlsx"
 EXCEL_RESULTADOS = RUTA_ESTUDIO / "resultados" / "Pruebas_por_peso_MPC_resultados.xlsx"
 
 # ── Modelo PLECS ─────────────────────────────────────────────────────────────
-MODEL_NAME = "MMC_sinmodulacion - Con MPC - Corrección Predicciones"
+MODEL_NAME = "MMC_sinmodulacion - Con MPC - trapezoide y con 2V0"
 PLECS_URL = "http://localhost:1080/RPC2"
 
 # Bloque C-Script del MPC de capacitores: contiene N (horizonte) y los 7 pesos
-# (q11, q22, q33, q44, q55, r11, r22) como #define.
-BLOQUE_CAPACITORES = f"{MODEL_NAME}/Mitigation/C-Script"
+# (q11, q22, q33, q44, q55, r11, r22) como #define. CONFIRMADO con el usuario
+# (2026-10-10): tras limpiar el modelo nuevo de bloques de prueba redundantes
+# (C-Script, C-Script2, Optimization1, Optimization2 del lado capacitores
+# fueron borrados), el bloque activo/conectado es "C-Script1". El subsistema
+# contenedor tiene salto de línea literal en su nombre real ("MPC Control\nCapacitor").
+BLOQUE_CAPACITORES = f"{MODEL_NAME}/Mitigation/MPC Control\nCapacitor/C-Script1"
 
 # Bloque C-Script del MPC de corrientes circulantes: contiene NrowG (= 2*N) y
 # NrowA (= 2*NrowG = 4*N), y los pesos fijos Q_VAL=1, R_VAL=1e-3 (NO modificar
 # estos dos, solo NrowG y NrowA). OJO: el nombre real del subsistema en PLECS
 # contiene un salto de línea literal ("MPC\nControl Corrientes") — confirmado
-# vía plecs.getModelTree; replicar tal cual al construir la ruta.
+# vía plecs.getModelTree; replicar tal cual al construir la ruta. El bloque
+# activo sigue siendo "Optimization" sin sufijo (Optimization1 vacío/sin usar).
 BLOQUE_CORRIENTES = f"{MODEL_NAME}/Mitigation/MPC\nControl Corrientes/Optimization"
 
-# Bloques que NO dependen del horizonte (muxes, confirmado con el usuario
-# 2026-09-30): Mitigation/MPC\nControl Corrientes/Optimization1,
-# Mitigation/Optimization1, Predictions. No tocar sus #define.
+# Bloques que NO dependen del horizonte (muxes/sin usar): Mitigation/MPC\n
+# Control Corrientes/Optimization1, Predictions. No tocar sus #define.
 
 # La variable de horizonte "n" (además de N, NrowG, NrowA) vive en
 # InitializationCommands (Simulation Parameters > Initialization), no en un C-Script.
@@ -65,15 +81,25 @@ HORIZONTE_REFERENCIA = 3  # mediana de HORIZONTES
 # Nombres de las variables (#define) en BLOQUE_CAPACITORES.
 NOMBRES_PESOS = ["q11", "q22", "q33", "q44", "q55", "r11", "r22"]
 
-# CONFIRMADO con el usuario (2026-09-30): valores actuales del modelo (caso base).
+# RESTRICCIONES DE IGUALDAD confirmadas con el usuario (2026-10-10): q11 debe
+# ser siempre igual a q22, y q44 siempre igual a q55 (simetría física del
+# sistema). r11 y r22 SÍ pueden variar independientemente entre sí. Esto
+# reduce las variables de decisión efectivas de 7 a 5: q11(=q22), q33,
+# q44(=q55), r11, r22. Los scripts de Fase 2/3 deben respetar esto: al variar
+# q11 también hay que variar q22 en conjunto (y lo mismo para q44/q55), no
+# tratarlos como ejes independientes del espacio de búsqueda.
+PESOS_IGUALES = [("q11", "q22"), ("q44", "q55")]
+
+# CONFIRMADO con el usuario (2026-10-10): valores actuales del modelo nuevo
+# ("trapezoide y con 2V0") — caso base.
 PESOS_BASE = {
-    "q11": 1.0,
-    "q22": 1.0,
-    "q33": 10000.0,
-    "q44": 10.0,
-    "q55": 10.0,
-    "r11": 1.0e-2,
-    "r22": 1.0e-2,
+    "q11": 25.0,
+    "q22": 25.0,
+    "q33": 1.0,
+    "q44": 1.0,
+    "q55": 1.0,
+    "r11": 1.0e-5,
+    "r22": 1.0e-5,
 }
 
 # Pesos FIJOS del control de corrientes circulantes (NO modificar, sección 1).
@@ -90,10 +116,26 @@ R_VAL = 1.0e-3
 # (falla al conectar la ventana). Se reemplaza el criterio P0(c) de amplitud de
 # i_ac por la señal del scope "I. DC" del nivel superior, que debe estabilizarse
 # cerca de 0 A. Ver TOL_I_DC más abajo.
+# CORRECCIÓN (2026-10-04): el scope de voltajes de capacitor SIN TRANSFORMAR
+# es "Voltaje Capacitores/Scope1" (confirmado con el usuario), no "Scope" (que
+# usamos por error toda la sesión anterior — probablemente muestra otra
+# señal, posiblemente transformada/derivada, lo que explicaba valores
+# irreales como -266V o 439V en pruebas de "divergencia" que en realidad
+# estaban leyendo el scope equivocado). NOTA: a diferencia de "MPC\nControl
+# Corrientes" (que sí tiene salto de línea en el título real de ventana),
+# "Voltaje Capacitores" usa un ESPACIO normal en el título de ventana —
+# confirmado enumerando las ventanas abiertas directamente (el \n que muestra
+# plecs.getModelTree para el subsistema interno no siempre coincide con el
+# título real de la ventana del scope).
+# "osc_cap" agregado (2026-10-10, confirmado con el usuario) como fuente
+# adicional de verificación: scope nuevo en el modelo que muestra la
+# oscilación directamente, usado para contrastar contra el cálculo manual de
+# pico-pico sobre v_cap (no reemplaza el cálculo, lo valida).
 SCOPES = {
-    "v_cap": f"{MODEL_NAME}/Voltaje Capacitores/Scope",
+    "v_cap": f"{MODEL_NAME}/Voltaje Capacitores/Scope1",
     "i_circ": f"{MODEL_NAME}/C. Circul",
     "i_dc": f"{MODEL_NAME}/I. DC",
+    "osc_cap": f"{MODEL_NAME}/Osc. Cap",
 }
 
 # Orden confirmado de las trazas en cada scope exportado:
@@ -101,6 +143,7 @@ SENALES = {
     "v_cap": ["Vcap_ap", "Vcap_bp", "Vcap_cp", "Vcap_an", "Vcap_bn", "Vcap_cn"],
     "i_circ": ["i_circ_alpha", "i_circ_beta"],
     "i_dc": ["Idc"],
+    "osc_cap": ["osc_cap"],  # [PENDIENTE] confirmar cantidad/orden de trazas
 }
 
 # ── Parámetros físicos fijos (sección 1, NO modificar) ──────────────────────
@@ -110,13 +153,11 @@ V_REF = 150.0    # V
 
 # ── Ventana y tiempo de simulación ──────────────────────────────────────────
 T_VENTANA = 0.5  # s (mcm de 0.25 s y 0.02 s)
-# [PROVISIONAL] T_SIM=10s solo para desarrollar y probar el pipeline (metricas.py,
-# exportación, Excel). Confirmado con el usuario (2026-09-30): el caso base actual
-# DIVERGE (I.DC no converge a ~0, las medias de v_cap se alejan de 150V — "el
-# capacitor explota"), por lo que NO cumple P0. El usuario va a revisar/corregir
-# el control del MPC de capacitores antes de que las Fases 0-6 con resultados
-# reales puedan ejecutarse. Este valor DEBE recalcularse en la Fase 0 real,
-# una vez que el caso base converja, siguiendo el procedimiento de la sección 7.
+# CONFIRMADO (2026-10-10) con el modelo corregido ("trapezoide y con 2V0"):
+# el caso base converge correctamente con T_SIM=10s — medias v_cap≈150V,
+# oscilación=0.08V pico-pico, idénticos a los obtenidos con T_SIM=20s (misma
+# prueba repetida con el doble de tiempo dio exactamente los mismos valores),
+# confirmando régimen permanente alcanzado bien antes de los 10s.
 T_SIM = 10.0
 
 # ── Tolerancias y criterios (sección 2 y 4) ─────────────────────────────────
@@ -127,7 +168,13 @@ DEF_OSCILACION = "pico-pico"
 # CAMBIO DE CRITERIO P0(c), confirmado con el usuario (2026-09-30): ya no se usa
 # i_ac (no hay scope exportable para esa señal). Se reemplaza por la condición
 # |I.DC| < TOL_I_DC en la ventana de evaluación (post-estabilización).
-TOL_I_DC = 0.005      # A (5 mA), |I.DC| en la ventana de evaluación
+# AJUSTE (2026-10-10): con el modelo corregido, el caso base converge muy bien
+# en v_cap (medias ≈150V, oscilación 0.08V) pero I.DC se estabiliza en un
+# offset de ~2.37A que NO decae con más tiempo de simulación (idéntico en
+# t=10s y t=20s — confirmado empíricamente, no es un transitorio lento). Los
+# 5 mA originales eran una estimación de referencia, no una medición real del
+# sistema. Confirmado con el usuario: relajar a una tolerancia alcanzable.
+TOL_I_DC = 3.0        # A, |I.DC| en la ventana de evaluación
 TOL_V_MEDIA = 2.0     # V, diferencia permitida entre media de cada capacitor y V_REF
 
 # Régimen permanente (ventana final vs anterior, sección 4)

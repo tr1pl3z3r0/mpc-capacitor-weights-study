@@ -119,10 +119,21 @@ def aplicar_punto(horizonte: int, pesos: dict, config):
     - Los pesos se redondean a 3 cifras significativas ANTES de escribirlos
       (regla inquebrantable 5.7: "el valor escrito en la tabla es exactamente
       el que se simuló").
+    - TimeSpan del modelo (parámetro de PLECS, Simulation Parameters > Solver)
+      se sincroniza con config.T_SIM. Encontrado en producción (2026-10-04):
+      el modelo tenía TimeSpan=4s fijado manualmente (el usuario lo bajó de
+      su valor original porque el sistema solía divergir cerca de t=5s), y
+      quedó desincronizado de config.T_SIM=10, haciendo que CUALQUIER
+      simulación se cortara a los 4s y se malinterpretara como "divergencia"
+      cuando en realidad el solver nunca llegó a mostrar si era estable o no
+      más allá de ese punto.
     """
     _stop_simulation()
 
     pesos_redondeados = {k: _redondear_3_cifras(v) for k, v in pesos.items()}
+
+    srv = _server()
+    srv.plecs.set(MODEL_NAME, "TimeSpan", str(config.T_SIM))
 
     set_params({config.VARIABLE_HORIZONTE_INIT: horizonte})
 
