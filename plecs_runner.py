@@ -19,7 +19,7 @@ import win32process
 from pywinauto import Desktop, Application
 
 # ── Configuración ─────────────────────────────────────────────────────────────
-MODEL_NAME = "MMC_sinmodulacion - Con MPC - Corrección Predicciones"          # nombre exacto del modelo en PLECS
+MODEL_NAME = "MMC_sinmodulacion - Con MPC - trapezoide y con 2V0"          # nombre exacto del modelo en PLECS
 PLECS_URL  = "http://localhost:1080/RPC2"
 
 # Scopes a exportar: {clave: título_exacto_del_scope_en_PLECS}
