@@ -57,16 +57,18 @@ python -c "import numpy, scipy, pandas, openpyxl, matplotlib, optuna, pywinauto,
 ## 5. Preparar PLECS
 
 1. Copiar el modelo a la ruta configurada en `config.py` (`RUTA_MODELO_PLECS`):
-   `C:\Users\danie\Downloads\mpc_pruebas\MMC_sinmodulacion - Con MPC - Listo para pruebas por pesos.plecs`.
+   `C:\Users\danie\Downloads\MMC_sinmodulacion - Con MPC - trapezoide y con 2V0.plecs`.
    Si en esta máquina está en otra carpeta, cambiar `RUTA_MODELO_PLECS` en
    `config.py` (sin hacer commit de ese cambio).
 2. Activar la interfaz XML-RPC: en PLECS, *File → PLECS Preferences → General*,
    marcar "XML-RPC interface" con el puerto **1080** (`PLECS_URL` en `config.py`).
 3. Abrir el modelo en PLECS y dejarlo abierto mientras corre el estudio.
-4. Abrir las ventanas de los tres scopes que se exportan:
-   - `Voltaje Capacitores/Scope`
+4. Abrir las ventanas de los cuatro scopes que se exportan:
+   - `Voltaje Capacitores/Scope1` (el de voltajes sin transformar — NO "Scope"
+     a secas, que muestra otra señal)
    - `C. Circul`
    - `I. DC`
+   - `Osc. Cap` (verificación adicional de oscilación)
 
 ## 6. Durante la ejecución
 
@@ -123,8 +125,18 @@ python fase6_verificacion.py --git       # verificación final
 | `ModuleNotFoundError` | Falta instalar alguna librería (paso 4). |
 | Los resultados no cambian al variar un peso | Los nombres de bloques o variables del modelo no coinciden con `config.py` (`BLOQUE_CAPACITORES`, `BLOQUE_CORRIENTES`, `SCOPES`). |
 
-## 10. Pendiente antes de tener resultados reales
+## 10. Estado de la configuración
 
-En `config.py`, `T_SIM` (10 s) y `TOL_REPETIBILIDAD` (1 %) son provisionales.
-Hay que fijarlos en la Fase 0 cuando el caso base converja (ver
-`INSTRUCCIONES.md`, sección 7).
+Con el modelo "trapezoide y con 2V0" (corregido el 2026-10-10), el caso base
+confirmado (`q11=q22=25.0, q33=1.0, q44=q55=1.0, r11=r22=1e-5`, N=1) converge
+correctamente: medias de v_cap ≈150 V, oscilación 0.08 V pico-pico. `T_SIM=10s`
+ya está confirmado como definitivo (no placeholder).
+
+`TOL_REPETIBILIDAD` (1 %) sigue siendo provisional — pendiente de medición
+empírica real en la Fase 0.
+
+Importante: `q11` debe ser siempre igual a `q22`, y `q44` siempre igual a
+`q55` (restricción física confirmada con el usuario). `r11` y `r22` sí pueden
+variar independientemente. Esto reduce las variables de decisión efectivas de
+7 a 5 — ver `PESOS_IGUALES` en `config.py`. Los scripts de Fase 2/3 deben
+respetar esta restricción al explorar el espacio de pesos.
