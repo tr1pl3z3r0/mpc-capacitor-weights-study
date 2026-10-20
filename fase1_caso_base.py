@@ -28,8 +28,8 @@ def main():
             continue
         estado = fila["estado"]
         osc = fila.get("osc_max", "")
-        rms = fila.get("rms_icirc_peor", "")
-        print(f"  id={fila['id']}  estado={estado}  osc_max={osc}  rms_icirc_peor={rms}  "
+        desv = fila.get("desv_media_max", "")
+        print(f"  id={fila['id']}  estado={estado}  osc_max={osc}  desv_media_max={desv}  "
               f"duracion={fila['duracion_s']}s")
 
     print("\nFase 1 completa. Ver resultados/simulaciones.csv (fase=fase1).")

@@ -25,9 +25,19 @@ Los campos marcados [COMPLETAR] pueden venir vacíos. En ese caso, averígualos 
 - Modo de operación: entrega de potencia al puerto AC, con corrientes de amplitud cercana a 16 A.
 - Puerto AC: fuente de 20 V de amplitud y 4 Hz. Puerto DC: fuente de 450 V.
 - Capacitores en los clústers: voltaje inicial de 148 V y referencia de 150 V.
-- v0: señal signo (cuadrada) de 50 Hz.
+- v0: señal **TRAPEZOIDAL** de 50 Hz [CAMBIADO 2026-10-19, definitivo e
+  intencional — confirmado con el usuario: "cambios abruptos en v0 generaban
+  picos en el voltaje, el cambio de signo más suave es menos demandante al
+  sistema". Reemplaza la especificación original de v0 cuadrada].
+- Capacitancia de los submódulos: C = 2200e-6 F [CAMBIADO 2026-10-19,
+  intencional — antes C=1, valor normalizado/por unidad]. Los pesos del
+  MPC de capacitores fueron reajustados en consecuencia (ver sección 2).
 - Pesos FIJOS del control de corrientes: Q_Val = 1, R_Val = 1e-3.
 - Variables de decisión: SOLO los pesos del control de capacitores, Q = diag(q11..q55) y R = diag(r11, r22), y el horizonte.
+- RESTRICCIONES DE IGUALDAD [CONFIRMADO 2026-10-10]: q11 = q22 siempre, y
+  q44 = q55 siempre (simetría física del sistema). r11 y r22 SÍ pueden
+  variar independientemente entre sí. Reduce las variables de decisión
+  efectivas de 7 a 5.
 
 ## 2. Configuración
 Crea config.py con estos valores. Todo el código debe leerlos de ahí.
@@ -61,15 +71,53 @@ Crea config.py con estos valores. Todo el código debe leerlos de ahí.
 - INCLUIR_CASO_BASE_COMO_PRUEBA_1 = True
 
 ## 3. Jerarquía de prioridades
-La comparación es LEXICOGRÁFICA ESTRICTA: nunca sacrifiques un nivel superior para mejorar uno inferior.
-Ejemplo: osc = 9.8 V con RMS = 3 A es MEJOR que osc = 10.2 V con RMS = 0.5 A.
+
+**REEMPLAZADA POR COMPLETO el 2026-10-19** (confirmado con el usuario, tras
+cambiar el modelo a "v0Trapezoidal - C en 2200e-6 - Osc. Cap casi en 10V" y
+decidir dejar de usar i_circ como criterio). La jerarquía original de abajo
+(P0-P4 con i_circ como objetivo principal) queda OBSOLETA; se conserva
+tachada más abajo solo como referencia histórica.
+
+La comparación sigue siendo LEXICOGRÁFICA ESTRICTA: nunca se sacrifica un
+nivel superior para mejorar uno inferior.
 
 P0. VALIDEZ (obligatoria). Si una simulación falla aquí, se registra pero NO puede seleccionarse.
   a) La simulación terminó sin error, sin NaN/Inf y dentro de TIMEOUT_SIM.
   b) Se alcanzó el régimen permanente (criterio en la sección 4).
-  c) [MODIFICADO, confirmado con el usuario 2026-09-30] No existe un scope exportable para i_ac (el punto "Iout"/"Is" del nivel superior no es una ventana de scope real; pywinauto no puede exportarlo). En su lugar, la señal del scope "I. DC" del nivel superior debe estabilizarse cerca de 0: |I.DC| < TOL_I_DC (5 mA) en la ventana de evaluación, después de la estabilización. Esto reemplaza la condición original de amplitud de i_ac dentro de ±TOL_I_AC de I_AC_REF.
-  d) La media de CADA capacitor está a no más de TOL_V_MEDIA de 150 V.
-  e) Se usaron exactamente los parámetros fijos: Q_Val, R_Val, fuentes, condiciones iniciales y solver.
+  c) |I.DC| < TOL_I_DC en la ventana de evaluación, después de la estabilización.
+     TOL_I_DC = 3 A (ajustado 2026-10-10: con el modelo corregido, I.DC se
+     estabiliza en un offset de ~2.37A que NO decae con más tiempo de
+     simulación — no es un transitorio, es el régimen permanente real del
+     sistema; 5 mA era una estimación de referencia, no una medición real).
+  d) Se usaron exactamente los parámetros fijos: Q_Val, R_Val, fuentes, condiciones iniciales y solver.
+
+P1. OBJETIVO: minimizar |media(v_cap) − 150V| en la ventana de evaluación,
+    el PEOR caso entre los 6 capacitores (ap,bp,cp,an,bn,cn).
+
+P2. OBJETIVO PRINCIPAL: minimizar la oscilación pico-pico de v_cap (medida
+    directamente del scope "Osc. Cap", equivalente a "Voltaje
+    Capacitores/Scope1" — confirmado por el usuario que ambos muestran lo
+    mismo), el PEOR caso entre los 6 capacitores. Reemplaza al RMS de
+    corriente circulante como objetivo principal.
+
+P3. DESEMPATE en cascada (solo si P1 y P2 difieren menos de TOL_EMPATE):
+  1) menor |media(I.DC)| (lo más cercano a 0);
+  2) si también empatan en (1): menor oscilación pico-pico de I.DC.
+
+i_circ (corriente circulante, scope "C. Circul") se sigue exportando y
+registrando en simulaciones.csv como dato INFORMATIVO únicamente — NO
+interviene en P0-P3 ni en la selección de la Fase 4. Abrir igual la ventana
+del scope para que la exportación no falle.
+
+Si dos reglas entran en conflicto, este es el orden: integridad de datos
+(sección 5) > P0 > P1 > P2 > P3 > rapidez.
+
+### Jerarquía ORIGINAL (OBSOLETA desde 2026-10-19, referencia histórica)
+
+<details>
+<summary>Click para expandir — ya no aplica</summary>
+
+P0 (igual que arriba, salvo (c) que usaba TOL_I_DC=5mA).
 
 P1. RESTRICCIÓN DURA: oscilación < 10 V en TODOS los capacitores (se evalúa el peor). NUNCA se relaja.
 
@@ -84,7 +132,7 @@ P4. PREFERENCIAS (último desempate; también se reportan en el informe):
   2) menor ITAE;
   3) menor tiempo de simulación.
 
-Si dos reglas entran en conflicto, este es el orden: integridad de datos (sección 5) > P0 > P1 > P2 > P3 > P4 > rapidez.
+</details>
 
 ## 4. Definición exacta de las métricas
 Impleméntalas en metricas.py y VALÍDALAS con señales sintéticas antes de usarlas:

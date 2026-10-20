@@ -38,11 +38,13 @@ COLUMNAS_CSV = [
     "osc_vcap_ap", "osc_vcap_bp", "osc_vcap_cp", "osc_vcap_an", "osc_vcap_bn", "osc_vcap_cn",
     "osc_max", "desv_max",
     "media_vcap_ap", "media_vcap_bp", "media_vcap_cp", "media_vcap_an", "media_vcap_bn", "media_vcap_cn",
+    "desv_media_max",  # P1: peor |media(v_cap) - 150V| entre las 6 señales
+    # i_circ: INFORMATIVO desde 2026-10-19, no interviene en P0-P3.
     "rms_icirc_alpha", "rms_icirc_beta", "rms_icirc_peor", "rms_icirc_T025",
     "max_icirc", "min_icirc", "pico_abs_icirc",
     "rmse_vcap", "itae",
-    "idc_abs_max",
-    "valida_P0", "cumple_P1", "duracion_s", "semilla",
+    "idc_abs_max", "idc_media", "idc_osc",  # P0(c) usa idc_abs_max; P3 usa idc_media e idc_osc
+    "valida_P0", "duracion_s", "semilla",
 ]
 
 VCAP_NOMBRES = ["ap", "bp", "cp", "an", "bn", "cn"]
@@ -173,7 +175,7 @@ def simular_punto(horizonte: int, pesos: dict, fase: str, semilla: int = None,
 
     if usar_git:
         import git_sync
-        fila_claim = {**fila_base, "estado": "CORRIENDO", "valida_P0": "", "cumple_P1": "",
+        fila_claim = {**fila_base, "estado": "CORRIENDO", "valida_P0": "",
                       "duracion_s": ""}
         for col in COLUMNAS_CSV:
             fila_claim.setdefault(col, "")
@@ -186,7 +188,7 @@ def simular_punto(horizonte: int, pesos: dict, fase: str, semilla: int = None,
         pr.run_simulation(timeout=config.TIMEOUT_SIM)
     except Exception as e:
         print(f"  [sim {sim_id}] FALLIDA: {e}")
-        fila = {**fila_base, "estado": "FALLIDA", "valida_P0": False, "cumple_P1": False,
+        fila = {**fila_base, "estado": "FALLIDA", "valida_P0": False,
                 "duracion_s": round(time.time() - t0, 2)}
         for col in COLUMNAS_CSV:
             fila.setdefault(col, "")
@@ -200,7 +202,7 @@ def simular_punto(horizonte: int, pesos: dict, fase: str, semilla: int = None,
         dfs = _cargar_scopes(carpeta)
     except Exception as e:
         print(f"  [sim {sim_id}] TIMEOUT (export): {e}")
-        fila = {**fila_base, "estado": "TIMEOUT", "valida_P0": False, "cumple_P1": False,
+        fila = {**fila_base, "estado": "TIMEOUT", "valida_P0": False,
                 "duracion_s": round(time.time() - t0, 2)}
         for col in COLUMNAS_CSV:
             fila.setdefault(col, "")
@@ -232,7 +234,7 @@ def simular_punto(horizonte: int, pesos: dict, fase: str, semilla: int = None,
     if duracion_simulada < t_fin_ventana:
         print(f"  [sim {sim_id}] INVALIDA: simulación truncada en t={duracion_simulada:.4g}s "
               f"(< T_SIM={t_sim_real}s), probable divergencia del solver.")
-        fila = {**fila_base, "estado": "INVALIDA", "valida_P0": False, "cumple_P1": False,
+        fila = {**fila_base, "estado": "INVALIDA", "valida_P0": False,
                 "duracion_s": round(time.time() - t0, 2)}
         for col in COLUMNAS_CSV:
             fila.setdefault(col, "")
@@ -251,7 +253,7 @@ def simular_punto(horizonte: int, pesos: dict, fase: str, semilla: int = None,
     tiene_nan_inf = any(not np.all(np.isfinite(a)) for a in arrays_a_chequear)
 
     if tiene_nan_inf:
-        fila = {**fila_base, "estado": "INVALIDA", "valida_P0": False, "cumple_P1": False,
+        fila = {**fila_base, "estado": "INVALIDA", "valida_P0": False,
                 "duracion_s": round(time.time() - t0, 2)}
         for col in COLUMNAS_CSV:
             fila.setdefault(col, "")
@@ -265,10 +267,13 @@ def simular_punto(horizonte: int, pesos: dict, fase: str, semilla: int = None,
     senales_vcap = [vcap_df[c].to_numpy() for c in vcap_cols]
 
     osc_por_cap = [metricas.pico_pico(t_vcap, v, t_ini_ventana, t_fin_ventana) for v in senales_vcap]
-    osc_max = max(osc_por_cap)
+    osc_max = max(osc_por_cap)  # P2: objetivo principal (peor oscilación entre los 6 capacitores)
     desv_max = max(metricas.desviacion_max(t_vcap, v, t_ini_ventana, t_fin_ventana, config.V_REF)
                     for v in senales_vcap)
     medias = [metricas.media_ventana(t_vcap, v, t_ini_ventana, t_fin_ventana) for v in senales_vcap]
+    # P1: peor |media(v_cap) - 150V| entre los 6 capacitores (distinto de
+    # desv_max, que es la desviación instantánea máxima, no de la media).
+    desv_media_max = max(abs(m - config.V_REF) for m in medias)
 
     rms_alpha = metricas.rms(t_icirc, icirc_df["col1"].to_numpy(), t_ini_ventana, t_fin_ventana)
     rms_beta = metricas.rms(t_icirc, icirc_df["col2"].to_numpy(), t_ini_ventana, t_fin_ventana)
@@ -290,13 +295,16 @@ def simular_punto(horizonte: int, pesos: dict, fase: str, semilla: int = None,
     idc_col = idc_df["col1"].to_numpy()
     _, idc_win = metricas.recortar_ventana(t_idc, idc_col, t_ini_ventana, t_fin_ventana)
     idc_abs_max = float(np.max(np.abs(idc_win)))
+    # P3 (desempate): |media(I.DC)| lo más cercano a 0, luego oscilación de I.DC.
+    idc_media = float(metricas.media_ventana(t_idc, idc_col, t_ini_ventana, t_fin_ventana))
+    idc_osc = float(metricas.pico_pico(t_idc, idc_col, t_ini_ventana, t_fin_ventana))
 
-    regimen = metricas.regimen_permanente(t_vcap, senales_vcap, peor_senal, t_sim_real)
+    regimen = metricas.regimen_permanente(t_vcap, senales_vcap, peor_senal, t_sim_real,
+                                           t_icirc=t_icirc)
 
     valida_media = all(abs(m - config.V_REF) <= config.TOL_V_MEDIA for m in medias)
     valida_idc = idc_abs_max <= config.TOL_I_DC
     valida_P0 = regimen["estacionario"] and valida_media and valida_idc
-    cumple_P1 = osc_max < config.OSC_MAX
 
     estado = "OK" if valida_P0 else "NO_ESTACIONARIO"
 
@@ -307,6 +315,7 @@ def simular_punto(horizonte: int, pesos: dict, fase: str, semilla: int = None,
         "osc_max": round(osc_max, 4),
         "desv_max": round(desv_max, 4),
         **{f"media_vcap_{n}": round(m, 4) for n, m in zip(VCAP_NOMBRES, medias)},
+        "desv_media_max": round(desv_media_max, 4),
         "rms_icirc_alpha": round(rms_alpha, 4),
         "rms_icirc_beta": round(rms_beta, 4),
         "rms_icirc_peor": round(rms_peor, 4),
@@ -317,8 +326,9 @@ def simular_punto(horizonte: int, pesos: dict, fase: str, semilla: int = None,
         "rmse_vcap": round(rmse_vcap, 4),
         "itae": round(itae, 4),
         "idc_abs_max": round(idc_abs_max, 6),
+        "idc_media": round(idc_media, 6),
+        "idc_osc": round(idc_osc, 6),
         "valida_P0": valida_P0,
-        "cumple_P1": cumple_P1,
         "duracion_s": round(time.time() - t0, 2),
     }
 

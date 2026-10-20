@@ -77,17 +77,18 @@ def escribir_bloque(ws, k: int, horizonte: int, bloque: dict):
         f"en Q_Val = {config.Q_VAL}, R_Val = {config.R_VAL}"
     )
 
-    mejor_rms = None
+    # Mejor prueba del bloque según la jerarquía vigente (P1 desv_media_max,
+    # luego P2 osc_max) — ver INSTRUCCIONES.md sección 3. pruebas_2_a_10 ya
+    # viene ordenada por fase4_seleccion.py según esta jerarquía, así que el
+    # primer elemento no marcado NO DIVERSO es el mejor.
     mejor_idx = None
     for i, p in enumerate(pruebas):
         if p is bloque["prueba_1_caso_base"]:
             continue
         if p["id"] in no_cumple_ids:
             continue
-        rms = _to_float(p, "rms_icirc_peor")
-        if rms is not None and (mejor_rms is None or rms < mejor_rms):
-            mejor_rms = rms
-            mejor_idx = i
+        mejor_idx = i
+        break
 
     for i, prueba in enumerate(pruebas):
         prueba_num = i + 1
@@ -134,9 +135,11 @@ def escribir_hoja_metricas_adicionales(wb, seleccion: dict):
     headers = (
         ["horizonte", "prueba_num", "sim_id", "estado"]
         + [f"osc_vcap_{n}" for n in VCAP_NOMBRES]
-        + ["desv_max"]
+        + ["desv_max", "desv_media_max"]
         + [f"media_vcap_{n}" for n in VCAP_NOMBRES]
-        + ["rmse_vcap", "itae", "pico_abs_icirc", "idc_abs_max", "margen_10v", "no_cumple"]
+        + ["rmse_vcap", "itae", "idc_abs_max", "idc_media", "idc_osc",
+           "margen_10v", "no_diverso",
+           "rms_icirc_peor_informativo", "pico_abs_icirc_informativo"]
     )
     for j, h in enumerate(headers, start=1):
         ws.cell(row=1, column=j, value=h).font = FUENTE_NEGRITA
@@ -151,10 +154,12 @@ def escribir_hoja_metricas_adicionales(wb, seleccion: dict):
             fila_vals = (
                 [int(h_str), i, p.get("id"), p.get("estado")]
                 + [_to_float(p, f"osc_vcap_{n}") for n in VCAP_NOMBRES]
-                + [_to_float(p, "desv_max")]
+                + [_to_float(p, "desv_max"), _to_float(p, "desv_media_max")]
                 + [_to_float(p, f"media_vcap_{n}") for n in VCAP_NOMBRES]
-                + [_to_float(p, "rmse_vcap"), _to_float(p, "itae"), _to_float(p, "pico_abs_icirc"),
-                   _to_float(p, "idc_abs_max"), margen, p.get("id") in no_cumple_ids]
+                + [_to_float(p, "rmse_vcap"), _to_float(p, "itae"),
+                   _to_float(p, "idc_abs_max"), _to_float(p, "idc_media"), _to_float(p, "idc_osc"),
+                   margen, p.get("id") in no_cumple_ids,
+                   _to_float(p, "rms_icirc_peor"), _to_float(p, "pico_abs_icirc")]
             )
             for j, v in enumerate(fila_vals, start=1):
                 ws.cell(row=fila_out, column=j, value=v)
@@ -168,7 +173,7 @@ def escribir_hoja_resumen(wb, seleccion: dict):
     ws = wb.create_sheet(nombre)
 
     headers = ["horizonte", "n_simulaciones", "n_factibles", "mejor_sim_id",
-               "mejor_rms_icirc_peor", "mejor_osc_max"] + FILAS_PESOS
+               "mejor_desv_media_max", "mejor_osc_max"] + FILAS_PESOS
     for j, h in enumerate(headers, start=1):
         ws.cell(row=1, column=j, value=h).font = FUENTE_NEGRITA
 
@@ -180,7 +185,7 @@ def escribir_hoja_resumen(wb, seleccion: dict):
 
         fila_vals = [int(h_str), bloque["n_simulaciones"], bloque["n_factibles"]]
         if mejor:
-            fila_vals += [mejor.get("id"), _to_float(mejor, "rms_icirc_peor"), _to_float(mejor, "osc_max")]
+            fila_vals += [mejor.get("id"), _to_float(mejor, "desv_media_max"), _to_float(mejor, "osc_max")]
             fila_vals += [_to_float(mejor, p) for p in FILAS_PESOS]
         else:
             fila_vals += [None, None, None] + [None] * len(FILAS_PESOS)

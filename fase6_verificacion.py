@@ -29,7 +29,8 @@ from simulador import simular_punto
 
 NOMBRES_PESOS = config.NOMBRES_PESOS
 METRICAS_A_COMPARAR = [
-    "osc_max", "rms_icirc_peor", "pico_abs_icirc", "rmse_vcap", "itae", "idc_abs_max",
+    "osc_max", "desv_media_max", "rmse_vcap", "itae", "idc_abs_max", "idc_media", "idc_osc",
+    "rms_icirc_peor", "pico_abs_icirc",  # informativas, pero igual se verifica repetibilidad
 ]
 
 

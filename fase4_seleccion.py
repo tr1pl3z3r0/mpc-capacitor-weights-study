@@ -2,19 +2,27 @@
 fase4_seleccion.py — Selección de los 10 conjuntos de pesos por horizonte
 (sección 7, Fase 4), a partir de resultados/simulaciones.csv.
 
-Prueba 1 = caso base (fase=fase1), aunque no cumpla P0/P1 (se marca).
-Pruebas 2-10 = los 9 mejores candidatos que:
-  - cumplen P0 y P1 (valida_P0=True, cumple_P1=True);
-  - ordenados por la jerarquía lexicográfica estricta de la sección 3
-    (P2: rms_icirc_peor: luego P3 si |diff|<TOL_EMPATE: pico_abs_icirc, luego
-    rmse_vcap; luego P4: margen 10-osc, luego itae, luego duracion_s);
-  - elegidos de forma VORAZ exigiendo diversidad: cada candidato nuevo debe
-    diferir del caso base Y de cada ya seleccionado en al menos un peso por
-    una distancia en log10 >= DIST_MIN_LOG10 (factor >=2).
-Si no hay 9 diversos, se completa con los válidos más cercanos a OSC_MAX,
-marcados "NO CUMPLE" (la restricción de 10V NUNCA se relaja: estos puntos ya
-incumplieron P1, se incluyen solo para llenar la tabla, no se consideran
-factibles).
+JERARQUÍA REEMPLAZADA el 2026-10-19 (ver INSTRUCCIONES.md sección 3):
+  P0 = validez (valida_P0=True). Único filtro binario; todo lo que pasa P0
+       es "factible" (ya no hay restricción dura de oscilación <10V como P1
+       separado).
+  P1 = minimizar desv_media_max (|media(v_cap) - 150V|, peor de los 6).
+  P2 = minimizar osc_max (oscilación pico-pico de v_cap/Osc.Cap, peor de los
+       6) — objetivo principal.
+  P3 = desempate en cascada: |idc_media| lo más cercano a 0, luego idc_osc
+       (oscilación de I.DC) lo menor posible.
+  Empates en P1 y P2 se evalúan con tolerancia TOL_EMPATE (relativa) antes de
+  pasar al siguiente nivel.
+
+i_circ es informativo únicamente, no interviene en el ordenamiento.
+
+Prueba 1 = caso base (fase=fase1), aunque no pase P0 (se marca).
+Pruebas 2-10 = los 9 mejores candidatos que pasan P0, ordenados por la
+jerarquía de arriba, elegidos de forma VORAZ exigiendo diversidad: cada
+candidato nuevo debe diferir del caso base Y de cada ya seleccionado en al
+menos un peso por una distancia en log10 >= DIST_MIN_LOG10 (factor >=2).
+Si no hay 9 diversos que pasen P0, se completa con los que SÍ pasan P0 más
+cercanos al mejor P2 ya seleccionado (sin relajar P0), marcados "NO DIVERSO".
 
 Uso:
     python fase4_seleccion.py
@@ -69,45 +77,38 @@ def _es_diverso(candidato: dict, seleccionados: list, caso_base: dict) -> bool:
     return all(_distancia_log10(candidato, ref) >= config.DIST_MIN_LOG10 for ref in referencias)
 
 
-def _criterios_p4(row: dict):
-    osc_max = _to_float(row, "osc_max", float("inf"))
-    margen = config.OSC_MAX - osc_max if osc_max != float("inf") else float("-inf")
-    itae = _to_float(row, "itae", float("inf"))
-    duracion = _to_float(row, "duracion_s", float("inf"))
-    return (-margen, itae, duracion)
+def _empatados(a: float, b: float) -> bool:
+    """True si a y b están dentro de TOL_EMPATE (relativa a b)."""
+    if a == b:
+        return True
+    if b == 0:
+        return False
+    return abs(a - b) / abs(b) < config.TOL_EMPATE
 
 
 def _comparar(a: dict, b: dict) -> int:
-    """Comparador lexicográfico estricto de la sección 3: P2 (rms_icirc_peor);
-    si |diff relativa| < TOL_EMPATE se consideran empatados en P2 y se pasa a
-    P3 (pico_abs_icirc, luego rmse_vcap); si P3 también empata exactamente, P4
-    (margen, itae, duracion). Devuelve <0 si a es mejor, >0 si b es mejor."""
-    rms_a = _to_float(a, "rms_icirc_peor", float("inf"))
-    rms_b = _to_float(b, "rms_icirc_peor", float("inf"))
+    """Comparador lexicográfico estricto de la nueva jerarquía (sección 3):
+    P1 (desv_media_max) -> si empatan, P2 (osc_max) -> si empatan, P3
+    (|idc_media|, luego idc_osc). Devuelve <0 si a es mejor, >0 si b es mejor."""
+    p1_a = _to_float(a, "desv_media_max", float("inf"))
+    p1_b = _to_float(b, "desv_media_max", float("inf"))
+    if not _empatados(p1_a, p1_b):
+        return -1 if p1_a < p1_b else 1
 
-    diff_relativa = None
-    if rms_a not in (float("inf"),) and rms_b not in (float("inf"),) and rms_b != 0:
-        diff_relativa = abs(rms_a - rms_b) / abs(rms_b)
+    p2_a = _to_float(a, "osc_max", float("inf"))
+    p2_b = _to_float(b, "osc_max", float("inf"))
+    if not _empatados(p2_a, p2_b):
+        return -1 if p2_a < p2_b else 1
 
-    if diff_relativa is None or diff_relativa >= config.TOL_EMPATE:
-        if rms_a != rms_b:
-            return -1 if rms_a < rms_b else 1
-        # rms exactamente iguales (p.ej. ambos inf): caer a P3 igual.
+    idc_media_a = abs(_to_float(a, "idc_media", float("inf")))
+    idc_media_b = abs(_to_float(b, "idc_media", float("inf")))
+    if idc_media_a != idc_media_b:
+        return -1 if idc_media_a < idc_media_b else 1
 
-    pico_a = _to_float(a, "pico_abs_icirc", float("inf"))
-    pico_b = _to_float(b, "pico_abs_icirc", float("inf"))
-    if pico_a != pico_b:
-        return -1 if pico_a < pico_b else 1
-
-    rmse_a = _to_float(a, "rmse_vcap", float("inf"))
-    rmse_b = _to_float(b, "rmse_vcap", float("inf"))
-    if rmse_a != rmse_b:
-        return -1 if rmse_a < rmse_b else 1
-
-    p4_a = _criterios_p4(a)
-    p4_b = _criterios_p4(b)
-    if p4_a != p4_b:
-        return -1 if p4_a < p4_b else 1
+    idc_osc_a = _to_float(a, "idc_osc", float("inf"))
+    idc_osc_b = _to_float(b, "idc_osc", float("inf"))
+    if idc_osc_a != idc_osc_b:
+        return -1 if idc_osc_a < idc_osc_b else 1
 
     return 0
 
@@ -127,7 +128,7 @@ def seleccionar_horizonte(filas: list, horizonte: int) -> dict:
                             f"Correr fase1_caso_base.py primero.")
     caso_base = caso_base_candidatos[0]
 
-    factibles = [r for r in filas_h if _es_true(r, "valida_P0") and _es_true(r, "cumple_P1")]
+    factibles = [r for r in filas_h if _es_true(r, "valida_P0")]
     factibles.sort(key=functools.cmp_to_key(_comparar))
 
     seleccionados = []
@@ -139,28 +140,23 @@ def seleccionar_horizonte(filas: list, horizonte: int) -> dict:
         if len(seleccionados) == 9:
             break
 
-    no_cumple_marcados = []
+    no_diverso_marcados = []
     if len(seleccionados) < 9:
-        # Completar con los válidos (P0, aunque no P1) más cercanos a OSC_MAX,
-        # sin relajar la restricción: se marcan NO CUMPLE y no se consideran
-        # factibles. "Válidos" = pasan P0 aunque no P1.
+        # No hay 9 diversos que pasen P0: completar con los mejores factibles
+        # restantes (aunque no diversos), marcados NO DIVERSO. P0 nunca se
+        # relaja; solo se relaja la exigencia de diversidad.
         faltan = 9 - len(seleccionados)
-        candidatos_relleno = [
-            r for r in filas_h
-            if _es_true(r, "valida_P0") and not _es_true(r, "cumple_P1")
-            and r.get("id") not in {s.get("id") for s in seleccionados}
-            and r.get("id") != caso_base.get("id")
-        ]
-        candidatos_relleno.sort(key=lambda r: abs(_to_float(r, "osc_max", float("inf")) - config.OSC_MAX))
+        ids_usados = {s.get("id") for s in seleccionados} | {caso_base.get("id")}
+        candidatos_relleno = [r for r in factibles if r.get("id") not in ids_usados]
         for r in candidatos_relleno[:faltan]:
             seleccionados.append(r)
-            no_cumple_marcados.append(r.get("id"))
+            no_diverso_marcados.append(r.get("id"))
 
     bloque = {
         "horizonte": horizonte,
         "prueba_1_caso_base": caso_base,
         "pruebas_2_a_10": seleccionados,
-        "no_cumple_ids": no_cumple_marcados,
+        "no_cumple_ids": no_diverso_marcados,  # mantiene el nombre de clave por compatibilidad con Fase 5/6
         "n_simulaciones": len(filas_h),
         "n_factibles": len(factibles),
     }
@@ -184,17 +180,17 @@ def main():
             continue
 
         print(f"  simulaciones totales: {bloque['n_simulaciones']}  "
-              f"factibles (P0+P1): {bloque['n_factibles']}")
+              f"factibles (P0): {bloque['n_factibles']}")
         print(f"  Prueba 1 (caso base): id={bloque['prueba_1_caso_base']['id']}  "
               f"estado={bloque['prueba_1_caso_base']['estado']}")
         for i, r in enumerate(bloque["pruebas_2_a_10"], start=2):
-            marca = " [NO CUMPLE]" if r["id"] in bloque["no_cumple_ids"] else ""
-            print(f"  Prueba {i}: id={r['id']}  rms_icirc_peor={r.get('rms_icirc_peor')}  "
+            marca = " [NO DIVERSO]" if r["id"] in bloque["no_cumple_ids"] else ""
+            print(f"  Prueba {i}: id={r['id']}  desv_media_max={r.get('desv_media_max')}  "
                   f"osc_max={r.get('osc_max')}{marca}")
 
         if len(bloque["pruebas_2_a_10"]) < 9:
             print(f"  ADVERTENCIA: solo se encontraron {len(bloque['pruebas_2_a_10'])} de 9 "
-                  f"conjuntos para las Pruebas 2-10 (incluso tras completar con NO CUMPLE).")
+                  f"conjuntos factibles para las Pruebas 2-10.")
 
         resultado[str(h)] = bloque
 

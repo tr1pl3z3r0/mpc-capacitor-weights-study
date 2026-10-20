@@ -307,19 +307,30 @@ def run_simulation(timeout: float = 120.0):
 
 # ── Exportar scopes ───────────────────────────────────────────────────────────
 
-def verificar_scopes_abiertos():
+def verificar_scopes_abiertos(intentos: int = 3):
     """Chequea que las ventanas de todos los SCOPES configurados estén abiertas
     AHORA, antes de intentar exportar. Falla con un mensaje claro indicando
     cuál falta, en vez de colgarse silenciosamente en pywinauto (visto en
     producción: si una ventana de scope se cierra o nunca se abrió, el export
-    queda esperando indefinidamente sin traceback útil)."""
-    titulos_abiertos = {w.window_text() for w in Desktop(backend="uia").windows()}
-    faltantes = [key for key, title in SCOPES.items() if title not in titulos_abiertos]
-    if faltantes:
-        raise RuntimeError(
-            f"Las siguientes ventanas de scope no están abiertas en PLECS: "
-            f"{[SCOPES[k] for k in faltantes]}. Abrilas manualmente antes de simular."
-        )
+    queda esperando indefinidamente sin traceback útil).
+
+    Reintenta varias veces con delay: Desktop(backend="uia").windows() a veces
+    devuelve una instantánea desactualizada justo después de abrir una ventana
+    (visto en producción: la misma ventana no se detecta en un primer chequeo
+    pero sí en uno inmediatamente posterior, sin que nada cambiara realmente
+    en pantalla)."""
+    faltantes = []
+    for intento in range(intentos):
+        titulos_abiertos = {w.window_text() for w in Desktop(backend="uia").windows()}
+        faltantes = [key for key, title in SCOPES.items() if title not in titulos_abiertos]
+        if not faltantes:
+            return
+        if intento < intentos - 1:
+            time.sleep(0.5)
+    raise RuntimeError(
+        f"Las siguientes ventanas de scope no están abiertas en PLECS: "
+        f"{[SCOPES[k] for k in faltantes]}. Abrilas manualmente antes de simular."
+    )
 
 
 def export_scope_csv(scope_key: str, csv_path: Path, intentos: int = 3):

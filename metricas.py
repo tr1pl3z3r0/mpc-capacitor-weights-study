@@ -86,11 +86,19 @@ def rmse_respecto_ref(t: np.ndarray, x: np.ndarray, t_ini: float, t_fin: float, 
 
 
 def regimen_permanente(t: np.ndarray, senales_vcap: list, senal_icirc_peor: np.ndarray,
-                        t_sim: float, t_ventana: float = None) -> dict:
+                        t_sim: float, t_ventana: float = None,
+                        t_icirc: np.ndarray = None) -> dict:
     """Compara ventana final [T-Tv, T] contra la anterior [T-2*Tv, T-Tv].
-    Devuelve dict con 'estacionario' (bool) y los deltas medidos."""
+    Devuelve dict con 'estacionario' (bool) y los deltas medidos.
+
+    t es el eje de tiempo de senales_vcap. senal_icirc_peor puede tener su
+    propia resolución/cantidad de muestras (PLECS exporta cada scope con su
+    propio paso) — si difiere de t, pasar t_icirc explícitamente; si no se
+    da, se asume el mismo eje que v_cap (comportamiento legacy)."""
     if t_ventana is None:
         t_ventana = config.T_VENTANA
+    if t_icirc is None:
+        t_icirc = t
 
     t_fin_a, t_ini_a = t_sim, t_sim - t_ventana
     t_fin_b, t_ini_b = t_sim - t_ventana, t_sim - 2 * t_ventana
@@ -106,8 +114,8 @@ def regimen_permanente(t: np.ndarray, senales_vcap: list, senal_icirc_peor: np.n
         osc_b = pico_pico(t, v, t_ini_b, t_fin_b)
         delta_osc_max = max(delta_osc_max, abs(osc_a - osc_b))
 
-    rms_a = rms(t, senal_icirc_peor, t_ini_a, t_fin_a)
-    rms_b = rms(t, senal_icirc_peor, t_ini_b, t_fin_b)
+    rms_a = rms(t_icirc, senal_icirc_peor, t_ini_a, t_fin_a)
+    rms_b = rms(t_icirc, senal_icirc_peor, t_ini_b, t_fin_b)
     delta_rms_pct = abs(rms_a - rms_b) / rms_b if rms_b != 0 else float("inf")
 
     estacionario = (

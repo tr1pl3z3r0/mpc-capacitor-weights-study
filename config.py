@@ -11,17 +11,29 @@ Debe confirmarse en el punto de control de Fase 0 antes de avanzar a la Fase 1.
 MODELO ACTUALIZADO (2026-10-10): el usuario reemplazó el modelo PLECS por una
 versión corregida ("trapezoide y con 2V0") que soluciona varios errores,
 incluyendo que la señal v0 se enviaba trapezoidal en vez de cuadrada (sección
-1: "v0: señal signo (cuadrada) de 50 Hz"). Esto invalida TODOS los resultados
-de divergencia obtenidos con el modelo anterior durante la búsqueda manual de
-pesos estables — no eran representativos del sistema real. Además, durante
-esa búsqueda se encontraron dos bugs adicionales en el pipeline (no en el
-modelo): (1) el modelo tenía TimeSpan=4s configurado manualmente (el usuario
-lo había bajado porque el sistema solía divergir cerca de t=5s), desincronizado
-de config.T_SIM, por lo que toda simulación se cortaba a los 4s sin que el
-solver llegara a mostrar si era realmente estable más allá — ahora
-aplicar_punto() sincroniza TimeSpan con T_SIM en cada llamada; (2) el scope de
-v_cap apuntaba a "Scope" en vez de "Scope1" (el de voltajes sin transformar),
-lo que daba lecturas incorrectas.
+1 original: "v0: señal signo (cuadrada) de 50 Hz"). Esto invalida TODOS los
+resultados de divergencia obtenidos con el modelo anterior durante la
+búsqueda manual de pesos estables — no eran representativos del sistema
+real. Además, durante esa búsqueda se encontraron dos bugs adicionales en el
+pipeline (no en el modelo): (1) el modelo tenía TimeSpan=4s configurado
+manualmente (el usuario lo había bajado porque el sistema solía divergir
+cerca de t=5s), desincronizado de config.T_SIM, por lo que toda simulación
+se cortaba a los 4s sin que el solver llegara a mostrar si era realmente
+estable más allá — ahora aplicar_punto() sincroniza TimeSpan con T_SIM en
+cada llamada; (2) el scope de v_cap apuntaba a "Scope" en vez de "Scope1"
+(el de voltajes sin transformar), lo que daba lecturas incorrectas.
+
+MODELO ACTUALIZADO DE NUEVO (2026-10-19): el usuario volvió a cambiar v0 de
+cuadrada a TRAPEZOIDAL, esta vez de forma DEFINITIVA e intencional —
+confirmado explícitamente: "cambios abruptos en v0 generaban picos en el
+voltaje, el cambio de signo más suave es menos demandante al sistema". Esto
+reemplaza la especificación de la sección 1 original de INSTRUCCIONES.md
+("v0: señal signo (cuadrada) de 50 Hz" → ahora trapezoidal). También cambió
+el valor de capacitancia C a 2200e-6 (antes C=1, un valor por unidad/
+normalizado) de forma intencional. Nuevo modelo: "v0Trapezoidal - C en
+2200e-6 - Osc. Cap casi en 10V.plecs". Mismo bloque activo C-Script1 que el
+modelo anterior, pero con pesos reajustados por el cambio de C (ver
+comentarios en el propio C-Script1: "r11 ×100 por C 10 veces menor").
 """
 
 from pathlib import Path
@@ -29,22 +41,21 @@ from pathlib import Path
 # ── Rutas ────────────────────────────────────────────────────────────────────
 RUTA_ESTUDIO = Path(__file__).parent
 RUTA_MODELO_PLECS = Path(
-    r"C:\Users\danie\Downloads\MMC_sinmodulacion - Con MPC - trapezoide y con 2V0.plecs"
+    r"C:\Users\danie\Downloads\v0Trapezoidal - C en 2200e-6 - Osc. Cap casi en 10V.plecs"
 )
 SCRIPT_EXISTENTE = RUTA_ESTUDIO / "plecs_runner.py"  # wrapper reutilizado/extendido del script original
 PLANTILLA_EXCEL = "Pruebas_por_peso_MPC._Modelo_promedio.xlsx"
 EXCEL_RESULTADOS = RUTA_ESTUDIO / "resultados" / "Pruebas_por_peso_MPC_resultados.xlsx"
 
 # ── Modelo PLECS ─────────────────────────────────────────────────────────────
-MODEL_NAME = "MMC_sinmodulacion - Con MPC - trapezoide y con 2V0"
+MODEL_NAME = "v0Trapezoidal - C en 2200e-6 - Osc. Cap casi en 10V"
 PLECS_URL = "http://localhost:1080/RPC2"
 
 # Bloque C-Script del MPC de capacitores: contiene N (horizonte) y los 7 pesos
-# (q11, q22, q33, q44, q55, r11, r22) como #define. CONFIRMADO con el usuario
-# (2026-10-10): tras limpiar el modelo nuevo de bloques de prueba redundantes
-# (C-Script, C-Script2, Optimization1, Optimization2 del lado capacitores
-# fueron borrados), el bloque activo/conectado es "C-Script1". El subsistema
-# contenedor tiene salto de línea literal en su nombre real ("MPC Control\nCapacitor").
+# (q11, q22, q33, q44, q55, r11, r22) como #define. CONFIRMADO con el usuario:
+# el bloque activo/conectado es "C-Script1" (hay otros C-Script/C-Script2 en
+# el modelo que son copias de prueba, no tocar). El subsistema contenedor
+# tiene salto de línea literal en su nombre real ("MPC Control\nCapacitor").
 BLOQUE_CAPACITORES = f"{MODEL_NAME}/Mitigation/MPC Control\nCapacitor/C-Script1"
 
 # Bloque C-Script del MPC de corrientes circulantes: contiene NrowG (= 2*N) y
@@ -90,17 +101,27 @@ NOMBRES_PESOS = ["q11", "q22", "q33", "q44", "q55", "r11", "r22"]
 # tratarlos como ejes independientes del espacio de búsqueda.
 PESOS_IGUALES = [("q11", "q22"), ("q44", "q55")]
 
-# CONFIRMADO con el usuario (2026-10-10): valores actuales del modelo nuevo
-# ("trapezoide y con 2V0") — caso base.
+# CONFIRMADO con el usuario (2026-10-19): valores actuales del modelo
+# "v0Trapezoidal - C en 2200e-6 - Osc. Cap casi en 10V" — caso base. Pesos
+# reajustados respecto a la versión anterior por el cambio de capacitancia
+# (comentario en el propio C-Script1: "r11 ×100 por C 10 veces menor";
+# "q33 antes 1.0: ahora Δ0 se controla activamente").
 PESOS_BASE = {
-    "q11": 25.0,
-    "q22": 25.0,
-    "q33": 1.0,
+    "q11": 150.0,
+    "q22": 150.0,
+    "q33": 300.0,
     "q44": 1.0,
     "q55": 1.0,
-    "r11": 1.0e-5,
-    "r22": 1.0e-5,
+    "r11": 3.0,
+    "r22": 3.0,
 }
+
+# Valor de capacitancia de los submódulos (parámetro físico, #define C en
+# BLOQUE_CAPACITORES). Cambiado intencionalmente por el usuario (2026-10-19)
+# de C=1 (normalizado) a C=2200e-6 (valor real en Faradios). NO es un peso
+# de decisión del MPC — es un parámetro físico fijo del modelo, documentado
+# acá solo como referencia.
+C_SUBMODULO = 2200e-6
 
 # Pesos FIJOS del control de corrientes circulantes (NO modificar, sección 1).
 Q_VAL = 1.0
@@ -127,15 +148,17 @@ R_VAL = 1.0e-3
 # confirmado enumerando las ventanas abiertas directamente (el \n que muestra
 # plecs.getModelTree para el subsistema interno no siempre coincide con el
 # título real de la ventana del scope).
-# "osc_cap" agregado (2026-10-10, confirmado con el usuario) como fuente
-# adicional de verificación: scope nuevo en el modelo que muestra la
-# oscilación directamente, usado para contrastar contra el cálculo manual de
-# pico-pico sobre v_cap (no reemplaza el cálculo, lo valida).
+# CAMBIO (2026-10-19): el usuario confirmó que "Osc. Cap" muestra exactamente
+# lo mismo que "Voltaje Capacitores/Scope1" (voltajes de capacitor sin
+# transformar, 6 trazas) — verificado exportando ambos: mismo formato (7
+# columnas, tiempo + 6 trazas "Vm:Measured voltage"), mismo valor inicial
+# 148V. Se usa "Osc. Cap" como fuente ÚNICA de v_cap de ahora en más (un
+# scope menos que mantener abierto); ya no hace falta abrir
+# "Voltaje Capacitores/Scope1" por separado.
 SCOPES = {
-    "v_cap": f"{MODEL_NAME}/Voltaje Capacitores/Scope1",
+    "v_cap": f"{MODEL_NAME}/Osc. Cap",
     "i_circ": f"{MODEL_NAME}/C. Circul",
     "i_dc": f"{MODEL_NAME}/I. DC",
-    "osc_cap": f"{MODEL_NAME}/Osc. Cap",
 }
 
 # Orden confirmado de las trazas en cada scope exportado:
@@ -143,7 +166,6 @@ SENALES = {
     "v_cap": ["Vcap_ap", "Vcap_bp", "Vcap_cp", "Vcap_an", "Vcap_bn", "Vcap_cn"],
     "i_circ": ["i_circ_alpha", "i_circ_beta"],
     "i_dc": ["Idc"],
-    "osc_cap": ["osc_cap"],  # [PENDIENTE] confirmar cantidad/orden de trazas
 }
 
 # ── Parámetros físicos fijos (sección 1, NO modificar) ──────────────────────
@@ -191,7 +213,7 @@ PRUEBAS_MAX_POR_HORIZONTE = 80
 PACIENCIA = 20
 PRUEBAS_EXTRA_EXPLORATORIAS = 20  # si quedan <9 candidatos factibles diversos al llegar al máximo
 
-TOL_EMPATE = 0.01       # 1% (criterio P3)
+TOL_EMPATE = 0.02       # 2% (confirmado 2026-10-19: tolerancia de empate en P1 y P2)
 DIST_MIN_LOG10 = 0.301  # equivale a factor 2 (criterio Fase 4)
 
 # ── Reproducibilidad y límites de ejecución ─────────────────────────────────

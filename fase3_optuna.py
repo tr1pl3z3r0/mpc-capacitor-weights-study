@@ -1,5 +1,16 @@
 """
-fase3_optuna.py — Optimización bayesiana por horizonte (sección 7, Fase 3).
+fase3_optuna.py — Optimización bayesiana multi-objetivo por horizonte
+(sección 7, Fase 3).
+
+JERARQUÍA REEMPLAZADA el 2026-10-19 (ver INSTRUCCIONES.md sección 3):
+  P0 = validez (restricción, vía trial.set_constraint).
+  P1 = minimizar desv_media_max (|media(v_cap) - 150V|, peor de los 6).
+  P2 = minimizar osc_max (oscilación pico-pico v_cap) — objetivo principal.
+Optuna corre en modo MULTI-OBJETIVO (directions=["minimize", "minimize"]
+sobre [desv_media_max, osc_max]) y devuelve un frente de Pareto
+(study.best_trials). La Fase 4 aplica el orden lexicográfico estricto
+P1>P2>P3 (con P3 = desempate por I.DC, que Optuna no optimiza activamente)
+sobre los resultados en simulaciones.csv para la selección final.
 
 Un estudio Optuna por horizonte, en orden creciente, con almacenamiento SQLite
 local (NO se sincroniza entre máquinas — cada máquina mantiene su propio
@@ -16,24 +27,29 @@ Uso:
 
 import argparse
 import json
-import math
 
-import numpy as np
 import optuna
 from optuna.samplers import TPESampler
 
 import config
-from simulador import simular_punto, buscar_existente
+from simulador import simular_punto
+
+VCAP_NOMBRES = ["ap", "bp", "cp", "an", "bn", "cn"]
 
 
 def cargar_rangos_log10() -> dict:
     """Rango [exp_min, exp_max] por peso optimizable, en décadas respecto a
     PESOS_BASE. Usa resultados/fase2_conclusiones.json si existe (y el peso no
-    quedó fijado en FIJAR_EN_BASE); si no, RANGO_LOG10 genérico de config."""
+    quedó fijado en FIJAR_EN_BASE); si no, RANGO_LOG10 genérico de config.
+
+    Respeta config.PESOS_IGUALES: solo el primer peso de cada par (q11, q44)
+    se trata como variable independiente; el segundo (q22, q55) se deriva
+    igual al primero al aplicar el punto."""
     rango_generico = list(config.RANGO_LOG10)
     conclusiones_path = config.RESULTADOS_DIR / "fase2_conclusiones.json"
 
-    pesos_a_optimizar = list(config.NOMBRES_PESOS)
+    pesos_dependientes = {b for _, b in config.PESOS_IGUALES}
+    pesos_a_optimizar = [p for p in config.NOMBRES_PESOS if p not in pesos_dependientes]
     rangos = {p: rango_generico for p in pesos_a_optimizar}
 
     if conclusiones_path.exists():
@@ -51,77 +67,63 @@ def cargar_rangos_log10() -> dict:
     return pesos_a_optimizar, rangos
 
 
-def _set_constraints(trial: optuna.Trial, constraints: list):
-    """Guarda las restricciones de dos formas: vía la API nueva de Optuna
-    (trial.set_constraint, consumida automáticamente por el sampler) y como
-    user_attr "constraints" (lista ordenada [c1,c2,c3,c4], tal como pide
-    INSTRUCCIONES.md sección 7 Fase 3, usada por nuestra propia lógica de
-    selección/diversidad)."""
-    nombres = ["c1_osc", "c2_idc", "c3_vmedia", "c4_regimen"]
-    for nombre, valor in zip(nombres, constraints):
-        trial.set_constraint(nombre, valor)
-    trial.set_user_attr("constraints", constraints)
+def _expandir_pesos_iguales(pesos: dict) -> dict:
+    """Copia el valor del peso independiente al dependiente (q11->q22, q44->q55)."""
+    pesos = dict(pesos)
+    for independiente, dependiente in config.PESOS_IGUALES:
+        pesos[dependiente] = pesos[independiente]
+    return pesos
 
 
 def construir_objetivo(horizonte: int, pesos_a_optimizar: list, rangos: dict, usar_git: bool):
-    def objetivo(trial: optuna.Trial) -> float:
+    def objetivo(trial: optuna.Trial):
         pesos = dict(config.PESOS_BASE)
         for peso in pesos_a_optimizar:
             exp_min, exp_max = rangos[peso]
             exp = trial.suggest_float(peso, exp_min, exp_max)
             pesos[peso] = config.PESOS_BASE[peso] * (10.0 ** exp)
+        pesos = _expandir_pesos_iguales(pesos)
 
         fila = simular_punto(horizonte=horizonte, pesos=pesos, fase="fase3", usar_git=usar_git)
 
         if fila is None:
-            # Punto tomado por otra máquina: no contar este trial como válido.
-            _set_constraints(trial, [1e6, 1e6, 1e6, 1e6])
+            # Punto tomado por otra máquina.
+            trial.set_constraint("c0_valida", 1e6)
             raise optuna.TrialPruned()
 
         estado = fila["estado"]
         if estado in ("FALLIDA", "TIMEOUT", "INVALIDA"):
-            _set_constraints(trial, [1e6, 1e6, 1e6, 1e6])
+            trial.set_constraint("c0_valida", 1e6)
             trial.set_user_attr("sim_id", fila["id"])
             trial.set_user_attr("estado", estado)
-            return 1e6
+            return 1e6, 1e6
 
-        osc_max = float(fila["osc_max"])
-        idc_abs_max = float(fila["idc_abs_max"])
-        medias = [float(fila[f"media_vcap_{n}"])
-                  for n in ["ap", "bp", "cp", "an", "bn", "cn"]]
-        rms_icirc_peor = float(fila["rms_icirc_peor"])
-
-        c1 = osc_max - config.OSC_MAX
-        c2 = idc_abs_max - config.TOL_I_DC
-        c3 = max(abs(m - config.V_REF) for m in medias) - config.TOL_V_MEDIA
-        c4 = 0.0 if fila["valida_P0"] in ("True", True) else 1.0
-
-        _set_constraints(trial, [c1, c2, c3, c4])
+        valida_P0 = fila["valida_P0"] in ("True", True)
+        trial.set_constraint("c0_valida", 0.0 if valida_P0 else 1.0)
         trial.set_user_attr("sim_id", fila["id"])
         trial.set_user_attr("estado", estado)
 
-        return rms_icirc_peor
+        desv_media_max = float(fila["desv_media_max"])
+        osc_max = float(fila["osc_max"])
+        return desv_media_max, osc_max
 
     return objetivo
 
 
-def contar_factibles_diversos(study: optuna.Study) -> int:
-    """Cuenta candidatos factibles (P0+P1) cuya distancia máxima en log10 entre
-    ellos es >= DIST_MIN_LOG10 en al menos un peso (criterio de diversidad de
-    la Fase 4), de forma voraz."""
-    factibles = []
-    for t in study.trials:
-        if t.state != optuna.trial.TrialState.COMPLETE:
-            continue
-        c = t.user_attrs.get("constraints")
-        if c is None or any(x > 0 for x in c):
-            continue
-        factibles.append(t)
+def _es_factible(t: optuna.trial.FrozenTrial) -> bool:
+    c = t.system_attrs.get("constraints")
+    return c is not None and all(x <= 0 for x in c)
 
+
+def contar_factibles_diversos(study: optuna.Study) -> int:
+    """Cuenta candidatos factibles (P0) en el frente de Pareto cuya distancia
+    máxima en log10 entre ellos es >= DIST_MIN_LOG10 en al menos un peso
+    (criterio de diversidad de la Fase 4), de forma voraz."""
+    factibles = [t for t in study.best_trials if _es_factible(t)]
     if not factibles:
         return 0
 
-    factibles.sort(key=lambda t: t.value)
+    factibles.sort(key=lambda t: t.values[1])  # ordenar por P2 (osc_max)
     seleccionados = [factibles[0]]
     for t in factibles[1:]:
         diverso = all(
@@ -142,12 +144,9 @@ def hacer_callback_parada(horizonte: int):
         if n < config.PRUEBAS_MIN_POR_HORIZONTE:
             return
 
-        factibles = [t for t in study.trials
-                     if t.state == optuna.trial.TrialState.COMPLETE
-                     and t.user_attrs.get("constraints") is not None
-                     and all(x <= 0 for x in t.user_attrs["constraints"])]
-        mejor_rms = min((t.value for t in factibles), default=None)
-        mejor_historial.append(mejor_rms)
+        factibles = [t for t in study.trials if _es_factible(t)]
+        mejor_osc = min((t.values[1] for t in factibles), default=None)
+        mejor_historial.append(mejor_osc)
 
         if n >= config.PRUEBAS_MAX_POR_HORIZONTE:
             study.stop()
@@ -166,17 +165,13 @@ def hacer_callback_parada(horizonte: int):
 
 
 def ampliar_rango_si_border(study: optuna.Study, pesos_a_optimizar: list, rangos: dict) -> bool:
-    """Si el mejor punto queda a <0.25 décadas del borde en algún peso, amplía
-    ese rango 1 década (hasta el límite absoluto). Devuelve True si se amplió
-    algo (el llamador debe seguir optimizando)."""
-    factibles = [t for t in study.trials
-                 if t.state == optuna.trial.TrialState.COMPLETE
-                 and t.user_attrs.get("constraints") is not None
-                 and all(x <= 0 for x in t.user_attrs["constraints"])]
+    """Si el mejor punto (por P2) queda a <0.25 décadas del borde en algún
+    peso, amplía ese rango 1 década (hasta el límite absoluto)."""
+    factibles = [t for t in study.best_trials if _es_factible(t)]
     if not factibles:
         return False
 
-    mejor = min(factibles, key=lambda t: t.value)
+    mejor = min(factibles, key=lambda t: t.values[1])
     limite_abs_min, limite_abs_max = config.RANGO_LOG10_LIMITE
     algo_amplio = False
 
@@ -194,10 +189,11 @@ def ampliar_rango_si_border(study: optuna.Study, pesos_a_optimizar: list, rangos
 
 
 def optimizar_horizonte(horizonte: int, indice_horizonte: int, usar_git: bool):
-    print(f"\n{'='*60}\n  Fase 3: Optuna para horizonte N={horizonte}\n{'='*60}")
+    print(f"\n{'='*60}\n  Fase 3: Optuna (multi-objetivo P1,P2) para horizonte N={horizonte}\n{'='*60}")
 
     pesos_a_optimizar, rangos = cargar_rangos_log10()
-    print(f"  Pesos a optimizar: {pesos_a_optimizar}")
+    print(f"  Pesos a optimizar: {pesos_a_optimizar} "
+          f"(q22=q11 y q55=q44 se derivan automáticamente)")
     print(f"  Rangos (log10 décadas respecto a base): {rangos}")
 
     sampler = TPESampler(
@@ -211,10 +207,10 @@ def optimizar_horizonte(horizonte: int, indice_horizonte: int, usar_git: bool):
         study_name=f"horizonte_{horizonte}",
         load_if_exists=True,
         sampler=sampler,
-        direction="minimize",
+        directions=["minimize", "minimize"],  # [desv_media_max (P1), osc_max (P2)]
     )
 
-    # Puntos iniciales: caso base (log10=0 en todos los pesos optimizables).
+    # Punto inicial: caso base (log10=0 en todos los pesos optimizables).
     punto_base = {p: 0.0 for p in pesos_a_optimizar}
     study.enqueue_trial(punto_base, skip_if_exists=True)
 
@@ -241,21 +237,16 @@ def optimizar_horizonte(horizonte: int, indice_horizonte: int, usar_git: bool):
         study.optimize(objetivo, n_trials=config.PRUEBAS_EXTRA_EXPLORATORIAS, catch=(Exception,))
 
     n_diversos_final = contar_factibles_diversos(study)
-    factibles = [t for t in study.trials
-                 if t.state == optuna.trial.TrialState.COMPLETE
-                 and t.user_attrs.get("constraints") is not None
-                 and all(x <= 0 for x in t.user_attrs["constraints"])]
-    mejor_rms = min((t.value for t in factibles), default=None)
-    mejor_osc = None
+    factibles = [t for t in study.best_trials if _es_factible(t)]
+    mejor_osc = min((t.values[1] for t in factibles), default=None)
+    mejor_desv_media = None
     if factibles:
-        mejor_trial = min(factibles, key=lambda t: t.value)
-        mejor_osc = mejor_trial.user_attrs.get("constraints", [None])[0]
-        if mejor_osc is not None:
-            mejor_osc = mejor_osc + config.OSC_MAX  # deshacer c1 = osc - OSC_MAX
+        mejor_trial = min(factibles, key=lambda t: t.values[1])
+        mejor_desv_media = mejor_trial.values[0]
 
     msg = (f"Horizonte {horizonte}: {len(study.trials)} pruebas, "
-           f"{len(factibles)} factibles, {n_diversos_final} diversos, "
-           f"mejor_rms={mejor_rms}, mejor_osc={mejor_osc}")
+           f"{len(factibles)} factibles (Pareto), {n_diversos_final} diversos, "
+           f"mejor_osc={mejor_osc}, mejor_desv_media={mejor_desv_media}")
     print(f"  {msg}")
 
     config.RESULTADOS_DIR.mkdir(parents=True, exist_ok=True)

@@ -53,7 +53,10 @@ def fig_sensibilidad():
     filas = _leer_csv_sim()
     filas_fase2 = [r for r in filas if r["fase"] == "fase2"]
 
-    for peso in config.NOMBRES_PESOS:
+    pesos_dependientes = {b for _, b in config.PESOS_IGUALES}
+    pesos_a_graficar = [p for p in config.NOMBRES_PESOS if p not in pesos_dependientes]
+
+    for peso in pesos_a_graficar:
         puntos = []
         for r in filas_fase2:
             val = _to_float(r, peso)
@@ -63,27 +66,29 @@ def fig_sensibilidad():
             exp = np.log10(val / base_val)
             if abs(exp - round(exp)) > 0.05:
                 continue  # no es un punto del barrido de ese peso (otro peso varió)
+            # Los demás pesos independientes deben estar en base (los
+            # dependientes, p.ej. q22, siguen a su independiente q11 por
+            # PESOS_IGUALES y no se comparan acá).
             otros_en_base = all(
                 abs(_to_float(r, p, -1) - config.PESOS_BASE[p]) < 1e-9
-                for p in config.NOMBRES_PESOS if p != peso
+                for p in pesos_a_graficar if p != peso
             )
             if not otros_en_base:
                 continue
             if r["estado"] != "OK":
                 continue
-            puntos.append((exp, _to_float(r, "osc_max"), _to_float(r, "rms_icirc_peor"),
-                            _to_float(r, "pico_abs_icirc")))
+            puntos.append((exp, _to_float(r, "osc_max"), _to_float(r, "desv_media_max")))
 
         if not puntos:
             continue
         puntos.sort(key=lambda p: p[0])
-        exps, oscs, rmss, picos = zip(*puntos)
+        exps, oscs, desvs = zip(*puntos)
 
-        fig, axes = plt.subplots(1, 3, figsize=(13, 4))
+        fig, axes = plt.subplots(1, 2, figsize=(10, 4))
         for ax, vals, titulo, color in zip(
-            axes, [oscs, rmss, picos],
-            ["Oscilación (V)", "RMS i_circ (A)", "Pico abs i_circ (A)"],
-            PALETA[:3],
+            axes, [oscs, desvs],
+            ["Oscilación v_cap, P2 (V)", "|media(v_cap)-150V|, P1 (V)"],
+            PALETA[:2],
         ):
             ax.plot(exps, vals, "o-", color=color)
             ax.set_xlabel(f"log10({peso} / base)")
@@ -107,18 +112,18 @@ def fig_dispersión_por_horizonte(seleccion: dict):
             continue
 
         oscs = [_to_float(r, "osc_max") for r in filas_h]
-        rmss = [_to_float(r, "rms_icirc_peor") for r in filas_h]
+        desvs = [_to_float(r, "desv_media_max") for r in filas_h]
         ids = [r["id"] for r in filas_h]
 
         seleccionados_ids = {p["id"] for p in bloque["pruebas_2_a_10"]}
 
         fig, ax = plt.subplots(figsize=(7, 5))
         colores = [PALETA[2] if i in seleccionados_ids else PALETA[8] for i in ids]
-        ax.scatter(oscs, rmss, c=colores, alpha=0.7, edgecolors="none")
+        ax.scatter(oscs, desvs, c=colores, alpha=0.7, edgecolors="none")
         ax.axvline(config.OSC_MAX, color=PALETA[3], linestyle="--", label=f"{config.OSC_MAX} V")
-        ax.set_xlabel("Oscilación capacitores (V)")
-        ax.set_ylabel("RMS corriente circulante (A)")
-        ax.set_title(f"Horizonte N={h}: RMS vs oscilación")
+        ax.set_xlabel("Oscilación v_cap, P2 (V)")
+        ax.set_ylabel("|media(v_cap)-150V|, P1 (V)")
+        ax.set_title(f"Horizonte N={h}: frente Pareto P1 vs P2")
         ax.legend()
         ax.grid(True, alpha=0.3)
         fig.tight_layout()
@@ -128,10 +133,10 @@ def fig_dispersión_por_horizonte(seleccion: dict):
         print(f"  {out}")
 
 
-def fig_mejor_rms_vs_horizonte(seleccion: dict):
+def fig_mejor_osc_vs_horizonte(seleccion: dict):
     horizontes = []
-    mejores_rms = []
     mejores_osc = []
+    mejores_desv = []
 
     for h_str, bloque in sorted(seleccion.items(), key=lambda kv: int(kv[0])):
         no_cumple = set(bloque.get("no_cumple_ids", []))
@@ -140,28 +145,28 @@ def fig_mejor_rms_vs_horizonte(seleccion: dict):
             continue
         mejor = candidatos[0]
         horizontes.append(int(h_str))
-        mejores_rms.append(_to_float(mejor, "rms_icirc_peor"))
         mejores_osc.append(_to_float(mejor, "osc_max"))
+        mejores_desv.append(_to_float(mejor, "desv_media_max"))
 
     if not horizontes:
         print("  (sin candidatos factibles en ningún horizonte, se omite figura)")
         return
 
     fig, ax1 = plt.subplots(figsize=(7, 5))
-    ax1.plot(horizontes, mejores_rms, "o-", color=PALETA[0], label="RMS i_circ (A)")
+    ax1.plot(horizontes, mejores_osc, "o-", color=PALETA[0], label="Oscilación v_cap, P2 (V)")
     ax1.set_xlabel("Horizonte N")
-    ax1.set_ylabel("Mejor RMS i_circ factible (A)", color=PALETA[0])
+    ax1.set_ylabel("Mejor oscilación v_cap factible (V)", color=PALETA[0])
     ax1.tick_params(axis="y", labelcolor=PALETA[0])
 
     ax2 = ax1.twinx()
-    ax2.plot(horizontes, mejores_osc, "s--", color=PALETA[1], label="Oscilación (V)")
-    ax2.set_ylabel("Oscilación del mejor punto (V)", color=PALETA[1])
+    ax2.plot(horizontes, mejores_desv, "s--", color=PALETA[1], label="|media(v_cap)-150V|, P1 (V)")
+    ax2.set_ylabel("Desviación de la media del mejor punto (V)", color=PALETA[1])
     ax2.tick_params(axis="y", labelcolor=PALETA[1])
 
-    ax1.set_title("Mejor RMS factible y su oscilación vs horizonte")
+    ax1.set_title("Mejor P2 (oscilación) y su P1 (desv. media) vs horizonte")
     ax1.grid(True, alpha=0.3)
     fig.tight_layout()
-    out = config.FIGURAS_DIR / "mejor_rms_vs_horizonte.png"
+    out = config.FIGURAS_DIR / "mejor_osc_vs_horizonte.png"
     fig.savefig(out, dpi=120)
     plt.close(fig)
     print(f"  {out}")
@@ -250,7 +255,7 @@ def main():
     fig_dispersión_por_horizonte(seleccion)
 
     print("\n[3/4] Mejor RMS vs horizonte...")
-    fig_mejor_rms_vs_horizonte(seleccion)
+    fig_mejor_osc_vs_horizonte(seleccion)
 
     print("\n[4/4] Formas de onda (caso base y mejor por horizonte)...")
     fig_formas_de_onda(seleccion)
