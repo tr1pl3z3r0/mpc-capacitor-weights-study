@@ -83,10 +83,11 @@ def nrow_a(n_horizonte: int) -> int:
     return 4 * n_horizonte
 
 # ── Horizontes a estudiar ────────────────────────────────────────────────────
-# CONFIRMADO con el usuario (2026-09-30): solo 5 horizontes, no 10 — más allá de
-# N=5 el estudio es redundante. HORIZONTE_REFERENCIA = mediana por defecto.
-HORIZONTES = [1, 2, 3, 4, 5]
-HORIZONTE_REFERENCIA = 3  # mediana de HORIZONTES
+# CAMBIO DE ALCANCE (2026-10-19, confirmado con el usuario): el estudio ahora
+# es SOLO para horizonte N=1 — ya no 5 horizontes (1-5) ni 10. PESOS_BASE
+# (abajo) son específicos de N=1. El Excel tendrá un solo bloque en vez de 5.
+HORIZONTES = [1]
+HORIZONTE_REFERENCIA = 1  # único horizonte del estudio
 
 # ── Pesos del control de capacitores ────────────────────────────────────────
 # Nombres de las variables (#define) en BLOQUE_CAPACITORES.

@@ -3,9 +3,9 @@
 Lee todo este documento antes de empezar. Guárdalo como INSTRUCCIONES.md en la carpeta del estudio y vuelve a consultarlo cuando tengas dudas. Crea una lista de tareas con las fases de la sección 7.
 
 ## 0. Objetivo
-Automatizar, ejecutar y documentar un estudio de simulaciones en PLECS. Para cada uno de los 5 horizontes del MPC (N = 1, 2, 3, 4, 5 — confirmado con el usuario; más allá de N=5 es redundante), encuentra 10 conjuntos distintos de pesos del control de capacitores (q11, q22, q33, q44, q55, r11, r22). Esos conjuntos deben cumplir una oscilación de capacitores menor a 10 V y minimizar las corrientes circulantes. Escribe los resultados en una COPIA de la plantilla "Pruebas_por_peso_MPC._Modelo_promedio.xlsx".
+Automatizar, ejecutar y documentar un estudio de simulaciones en PLECS. Para el horizonte N=1 del MPC, encuentra 10 conjuntos distintos de pesos del control de capacitores (q11, q22, q33, q44, q55, r11, r22). Esos conjuntos deben minimizar la oscilación de capacitores (objetivo principal, P2) y la desviación de la media respecto a 150V (P1) — ver jerarquía actualizada en la sección 3. Escribe los resultados en una COPIA de la plantilla "Pruebas_por_peso_MPC._Modelo_promedio.xlsx".
 
-NOTA: la plantilla Excel y el texto original de estas instrucciones mencionan "10 horizontes"; se confirmó con el usuario (2026-09-30) que el estudio real cubre solo 5 horizontes (N=1..5). Donde el documento diga "10 horizontes" o "10 bloques", debe leerse como "5 horizontes" / "5 bloques" — se usarán solo los primeros 5 bloques de la hoja Excel (filas 3 a 77).
+NOTA (CAMBIOS DE ALCANCE SUCESIVOS): la plantilla Excel y el texto original de estas instrucciones mencionan "10 horizontes". Se confirmó con el usuario (2026-09-30) que el estudio real cubría 5 horizontes (N=1..5). Luego, el 2026-10-19, el usuario confirmó que el estudio es SOLO para horizonte N=1 — ya no 5 ni 10. Donde el documento diga "10 horizontes" o "5 horizontes" o "10/5 bloques", debe leerse como "1 horizonte (N=1)" / "1 bloque" — se usa solo el primer bloque de la hoja Excel (filas 3 a 17). PESOS_BASE es específico de N=1.
 
 NOTA (2026-10-04): el estudio se ejecuta en MÚLTIPLES máquinas en paralelo,
 coordinadas vía un repositorio de GitHub que actúa como base de datos
@@ -207,7 +207,7 @@ Si faltan dependencias, instálalas: optuna, numpy, scipy, pandas, openpyxl, mat
    ESPERA mi confirmación. Después de confirmado, ejecuta las Fases 1 a 6 sin pedir más confirmaciones, salvo en los casos de la sección 6.
 
 ### Fase 1: caso base (10 simulaciones)
-- Simula PESOS_BASE en los 10 horizontes. Este caso será la Prueba 1 de cada bloque.
+- Simula PESOS_BASE en el horizonte N=1 (único horizonte del estudio). Este caso será la Prueba 1 del bloque.
 - Opcional: si el código del MPC permite saber el significado físico de cada estado y de cada entrada, calcula un caso con la regla de Bryson (q_ii = 1/x_i,max², r_jj = 1/u_j,max²). Úsalo como punto inicial en la Fase 3 y documenta los máximos supuestos.
 
 ### Fase 2: sensibilidad, un peso a la vez, en HORIZONTE_REFERENCIA (aprox. 37–43 simulaciones)
