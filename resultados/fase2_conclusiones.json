@@ -1,0 +1,50 @@
+{
+  "q11": {
+    "accion": "OPTIMIZAR",
+    "var_osc_pct": 810.664,
+    "var_desv_media_pct": null,
+    "rango_valido_log10": [
+      -2,
+      0
+    ],
+    "nota": "Variación significativa; mantener en la optimización. Rango recortado por fallas/invalidez fuera de este intervalo."
+  },
+  "q33": {
+    "accion": "OPTIMIZAR",
+    "var_osc_pct": 4.054,
+    "var_desv_media_pct": 1669.414,
+    "rango_valido_log10": [
+      -1,
+      1
+    ],
+    "nota": "Variación significativa; mantener en la optimización. Rango recortado por fallas/invalidez fuera de este intervalo."
+  },
+  "q44": {
+    "accion": "OPTIMIZAR",
+    "var_osc_pct": 93.975,
+    "var_desv_media_pct": 20335.0,
+    "rango_valido_log10": [
+      0,
+      3
+    ],
+    "nota": "Variación significativa; mantener en la optimización. Rango recortado por fallas/invalidez fuera de este intervalo."
+  },
+  "r11": {
+    "accion": "OPTIMIZAR",
+    "n_validos": 1,
+    "rango_valido_log10": [
+      -0.1,
+      0.1
+    ],
+    "nota": "Solo 1 punto(s) válido(s) (OK) en el barrido amplio (±3 décadas); el sistema es muy sensible a este peso. Rango acotado a ±0.1 décadas alrededor del valor base."
+  },
+  "r22": {
+    "accion": "OPTIMIZAR",
+    "n_validos": 1,
+    "rango_valido_log10": [
+      -0.1,
+      0.1
+    ],
+    "nota": "Solo 1 punto(s) válido(s) (OK) en el barrido amplio (±3 décadas); el sistema es muy sensible a este peso. Rango acotado a ±0.1 décadas alrededor del valor base."
+  }
+}

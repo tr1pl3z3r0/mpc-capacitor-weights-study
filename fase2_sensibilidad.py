@@ -69,10 +69,18 @@ def main():
     for peso, puntos in resultados.items():
         validos = [(exp, f) for exp, f in puntos if f["estado"] == "OK"]
         if len(validos) < 2:
+            # CONFIRMADO con el usuario (2026-10-19): si solo el valor base
+            # converge (ej. r11, r22), NO fijar en base ni excluir de la
+            # optimización — mantenerlo con un rango MUY acotado alrededor
+            # del base (±0.1 décadas) para que Optuna pueda explorar
+            # variaciones finas sin arriesgar divergencia.
             conclusiones[peso] = {
-                "accion": "INSUFICIENTES_DATOS_VALIDOS",
+                "accion": "OPTIMIZAR",
                 "n_validos": len(validos),
-                "nota": "Menos de 2 puntos válidos (OK) en el barrido; no se puede evaluar sensibilidad.",
+                "rango_valido_log10": [-0.1, 0.1],
+                "nota": f"Solo {len(validos)} punto(s) válido(s) (OK) en el barrido amplio "
+                        f"(±3 décadas); el sistema es muy sensible a este peso. Rango acotado "
+                        f"a ±0.1 décadas alrededor del valor base.",
             }
             continue
 
@@ -80,9 +88,11 @@ def main():
         desvs = [float(f["desv_media_max"]) for _, f in validos]  # P1
 
         def variacion_pct(vals):
+            """None si el mínimo es 0 (división indefinida) — JSON estándar no
+            admite Infinity; None es más seguro para cualquier lector externo."""
             vals = np.array(vals)
             if vals.min() == 0:
-                return float("inf")
+                return None
             return float((vals.max() - vals.min()) / abs(vals.min()) * 100)
 
         var_osc = variacion_pct(oscs)
@@ -91,7 +101,8 @@ def main():
         exps_validos = [exp for exp, _ in validos]
         rango_recortado = (min(exps_validos), max(exps_validos)) != (min(EXPONENTES), max(EXPONENTES))
 
-        if var_osc < 2 and var_desv < 2:
+        fijar = var_osc is not None and var_desv is not None and var_osc < 2 and var_desv < 2
+        if fijar:
             conclusiones[peso] = {
                 "accion": "FIJAR_EN_BASE",
                 "var_osc_pct": round(var_osc, 3),
@@ -102,8 +113,8 @@ def main():
         else:
             conclusiones[peso] = {
                 "accion": "OPTIMIZAR",
-                "var_osc_pct": round(var_osc, 3),
-                "var_desv_media_pct": round(var_desv, 3),
+                "var_osc_pct": round(var_osc, 3) if var_osc is not None else None,
+                "var_desv_media_pct": round(var_desv, 3) if var_desv is not None else None,
                 "rango_valido_log10": rango_recortado and [min(exps_validos), max(exps_validos)] or None,
                 "nota": "Variación significativa; mantener en la optimización."
                         + (" Rango recortado por fallas/invalidez fuera de este intervalo."
